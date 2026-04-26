@@ -1793,3 +1793,28 @@ app.on("window-all-closed", () => {
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+
+// Exposed for unit testing only. Electron's main entry point does not read its
+// own module exports, so this block is harmless at runtime.
+module.exports = {
+  attachmentKind,
+  allowedModelSet,
+  commandExists,
+  extractCliTokenUsage,
+  formatArg,
+  isReadableTextAttachment,
+  isSnapshotIgnored,
+  listRuns,
+  modelContextLimit,
+  modelTokenPrices,
+  needsShell,
+  normalizeModelName,
+  normalizeRel,
+  nowRunId,
+  providerBaseUrl,
+  providerForModel,
+  runMtime,
+  runSortKeys,
+  tokenCost,
+  validationCommandForRun,
+};
