@@ -215,6 +215,7 @@ assert.ok(latestUsage.tokens.total > 0, "usage should record token estimate");
 assert.ok(latestUsage.context.used_percent >= 0, "usage should record context fill");
 assert.ok(latestUsage.cost.estimated_usd >= 0, "usage should record cost estimate");
 
+cp.execFileSync(process.execPath, [path.resolve(__dirname, "policy.test.js")], { stdio: "inherit" });
 cp.execFileSync(process.execPath, [path.resolve(__dirname, "spawn-async.test.js")], { stdio: "inherit" });
 cp.execFileSync(process.execPath, [path.resolve(__dirname, "restore-run.test.js")], { stdio: "inherit" });
 
