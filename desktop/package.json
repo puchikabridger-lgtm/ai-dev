@@ -9,6 +9,7 @@
     "start:project": "electron . --project",
     "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer/app.js",
     "smoke": "node test/smoke.js",
+    "test:main": "node --test --test-concurrency=1 \"test/main/*.test.js\"",
     "test:renderer": "node --test --test-concurrency=1 \"test/renderer/*.test.js\""
   },
   "devDependencies": {

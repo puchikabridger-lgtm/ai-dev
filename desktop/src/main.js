@@ -3,6 +3,10 @@ const path = require("path");
 const fs = require("fs");
 const cp = require("child_process");
 const crypto = require("crypto");
+const snapshot = require("./snapshot");
+const policy = require("./policy");
+const { spawnAsync } = require("./spawn-async");
+const { restoreRunFromDir } = require("./restore-run");
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
 const APP_AI_DIR = path.join(APP_ROOT, ".ai");
@@ -263,7 +267,7 @@ function projectSummary(root) {
   return "No summary yet.";
 }
 
-function refreshProjectSummary(root) {
+async function refreshProjectSummary(root) {
   const current = settings();
   const selected = path.resolve(root || projectRoot());
   const fallback = projectSummary(selected);
@@ -276,26 +280,51 @@ function refreshProjectSummary(root) {
       readText(path.join(selected, "README.md")),
     ].join("\n\n").trim().slice(0, 12000);
     if (source) {
-      const result = cp.spawnSync(codex, [
+      const summaryModel = current.directModel || current.model || "gpt-5.4-mini";
+      const summaryReasoning = "none";
+      const summaryPrompt = `Write one short project summary for a sidebar. Max 12 words. No markdown.\n\n${source}`;
+      const summaryRunId = nowRunId("summary-refresh");
+      const projectAiDir = path.join(selected, ".ai");
+      const gate = policy.preflight({
+        projectAiDir,
+        model: summaryModel,
+        reasoning: summaryReasoning,
+        promptText: summaryPrompt,
+        budgetGuard: current.budgetGuard !== false,
+        approvalGranted: false,
+      });
+      if (!gate.ok) {
+        return touchProject(selected, { summary: fallback });
+      }
+      const result = await spawnAsync(codex, [
         "exec",
         "-",
         "--cd",
         selected,
         "-m",
-        current.directModel || current.model || "gpt-5.4-mini",
+        summaryModel,
         "-s",
         "read-only",
       ], {
-        input: `Write one short project summary for a sidebar. Max 12 words. No markdown.\n\n${source}`,
+        input: summaryPrompt,
         cwd: selected,
         shell: needsShell(codex),
-        windowsHide: true,
         encoding: "utf8",
         env: processEnvForSettings(current),
         timeout: 120000,
       });
       const text = String(result.stdout || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-1)[0];
-      if (result.status === 0 && text) summary = text.replace(/^["']|["']$/g, "").slice(0, 120);
+      if (result.status === 0 && text) {
+        summary = text.replace(/^["']|["']$/g, "").slice(0, 120);
+        try {
+          policy.appendLedger(projectAiDir, {
+            runId: summaryRunId,
+            model: summaryModel,
+            reasoning: summaryReasoning,
+            cost: gate.budgetStatus.estimated_cost_usd,
+          });
+        } catch {}
+      }
     }
   }
   return touchProject(selected, { summary });
@@ -631,6 +660,7 @@ const SNAPSHOT_IGNORED_PATHS = new Set([
   ".ai/budget/ledger.jsonl",
 ]);
 const SNAPSHOT_IGNORED_EXTENSIONS = new Set([".log", ".tmp", ".bak"]);
+const SNAPSHOT_MAX_BACKUP_BYTES = 2 * 1024 * 1024;
 
 function normalizeRel(file) {
   return file.split(path.sep).join("/");
@@ -671,6 +701,21 @@ function snapshot_files() {
   const root = projectRoot();
   const result = {};
   if (!fs.existsSync(root)) return result;
+  const git = resolveCommand("git");
+  const tracked = git ? snapshot.gitTrackedFiles(root, { gitPath: git }) : null;
+  if (tracked) {
+    for (const rel of tracked) {
+      if (isSnapshotIgnored(rel)) continue;
+      const abs = path.join(root, rel);
+      try {
+        if (!fs.statSync(abs).isFile()) continue;
+      } catch {
+        continue;
+      }
+      result[rel] = fileHash(abs);
+    }
+    return result;
+  }
   for (const file of walkFiles(root)) {
     const rel = normalizeRel(path.relative(root, file));
     result[rel] = fileHash(file);
@@ -679,16 +724,10 @@ function snapshot_files() {
 }
 
 function backupBeforeFiles(runDir, beforeSnapshot) {
-  const root = projectRoot();
-  const backupDir = path.join(runDir, "before-files");
-  for (const rel of Object.keys(beforeSnapshot || {})) {
-    if (isSnapshotIgnored(rel)) continue;
-    const source = path.join(root, rel);
-    if (!fs.existsSync(source) || !fs.statSync(source).isFile()) continue;
-    const target = path.join(backupDir, rel);
-    ensureDir(path.dirname(target));
-    fs.copyFileSync(source, target);
-  }
+  return snapshot.backupBeforeFilesIn(projectRoot(), runDir, beforeSnapshot, {
+    isSnapshotIgnored,
+    maxBytes: SNAPSHOT_MAX_BACKUP_BYTES,
+  });
 }
 
 function changedFiles(beforeSnapshot, afterSnapshot = snapshot_files_safe()) {
@@ -1059,42 +1098,86 @@ function readRun(runId) {
   };
 }
 
+function npmArgv(...scriptArgs) {
+  const npm = resolveCommand("npm") || "npm";
+  return [npm, ...scriptArgs];
+}
+
+function pythonArgv(...args) {
+  const py = resolveCommand("python") || resolveCommand("python3") || "python";
+  return [py, ...args];
+}
+
 function validationCommandForRun(run) {
   const config = projectConfig();
   const commands = packageCommands(projectRoot());
   const changed = Array.isArray(run?.audit?.changed_files) ? run.audit.changed_files : [];
   const named = commands.map((item) => item.name);
-  if (config.validation?.command) return config.validation.command;
-  if (changed.some((file) => /\.(js|jsx|ts|tsx|css|html)$/i.test(file))) {
-    if (named.includes("check")) return "npm run check";
-    if (named.includes("test")) return "npm test";
-    if (named.includes("lint")) return "npm run lint";
+  const cfg = config.validation || {};
+  if (Array.isArray(cfg.argv) && cfg.argv.length) {
+    const argv = cfg.argv.map((value) => String(value));
+    return { argv, display: argv.map(formatArg).join(" "), shellString: null };
   }
-  if (changed.some((file) => /\.py$/i.test(file))) return "python -m py_compile " + changed.filter((file) => /\.py$/i.test(file)).map(formatArg).join(" ");
-  if (named.includes("test")) return "npm test";
-  if (named.includes("check")) return "npm run check";
-  return "";
+  if (typeof cfg.command === "string" && cfg.command.trim()) {
+    return { argv: null, display: cfg.command, shellString: cfg.command };
+  }
+  if (changed.some((file) => /\.(js|jsx|ts|tsx|css|html)$/i.test(file))) {
+    if (named.includes("check")) {
+      const argv = npmArgv("run", "check");
+      return { argv, display: "npm run check", shellString: null };
+    }
+    if (named.includes("test")) {
+      const argv = npmArgv("test");
+      return { argv, display: "npm test", shellString: null };
+    }
+    if (named.includes("lint")) {
+      const argv = npmArgv("run", "lint");
+      return { argv, display: "npm run lint", shellString: null };
+    }
+  }
+  if (changed.some((file) => /\.py$/i.test(file))) {
+    const pyFiles = changed.filter((file) => /\.py$/i.test(file));
+    const argv = pythonArgv("-m", "py_compile", ...pyFiles);
+    const display = ["python", "-m", "py_compile", ...pyFiles].map(formatArg).join(" ");
+    return { argv, display, shellString: null };
+  }
+  if (named.includes("test")) {
+    const argv = npmArgv("test");
+    return { argv, display: "npm test", shellString: null };
+  }
+  if (named.includes("check")) {
+    const argv = npmArgv("run", "check");
+    return { argv, display: "npm run check", shellString: null };
+  }
+  return null;
 }
 
 function runValidation(runId) {
   const run = readRun(runId);
   if (!run) throw new Error("Run not found.");
-  const commandLine = validationCommandForRun(run);
-  if (!commandLine) throw new Error("No validation command detected for this project.");
+  const detected = validationCommandForRun(run);
+  if (!detected) throw new Error("No validation command detected for this project.");
   const logFile = path.join(run.path, "validation-log.txt");
   const validationFile = path.join(run.path, "validation.json");
-  const shellCommand = process.platform === "win32" ? "powershell.exe" : "sh";
-  const shellArgs = process.platform === "win32"
-    ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", commandLine]
-    : ["-lc", commandLine];
-  spawnProcess(shellCommand, shellArgs, {
+  let spawnCommand;
+  let spawnArgs;
+  if (detected.argv) {
+    spawnCommand = detected.argv[0];
+    spawnArgs = detected.argv.slice(1);
+  } else {
+    spawnCommand = process.platform === "win32" ? "powershell.exe" : "sh";
+    spawnArgs = process.platform === "win32"
+      ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", detected.shellString]
+      : ["-lc", detected.shellString];
+  }
+  spawnProcess(spawnCommand, spawnArgs, {
     id: `validate-${runId}`,
     title: "Validate Run",
     phase: "validate",
     logPath: logFile,
     onClose: ({ code, signal, stdout, stderr, startedAt }) => {
       writeJson(validationFile, {
-        command: commandLine,
+        command: detected.display,
         status: code === 0 ? "passed" : "failed",
         code,
         signal,
@@ -1105,68 +1188,15 @@ function runValidation(runId) {
       });
     },
   });
-  return { ok: true, command: commandLine };
+  return { ok: true, command: detected.display };
 }
 
 function restoreRun(runId) {
-  const run = readRun(runId);
-  if (!run) {
-    return { ok: false, error: "Run not found." };
-  }
-  const before = readJson(path.join(run.path, "before-state.json"), {});
-  const beforeFiles = before.files || {};
-  const backupDir = path.join(run.path, "before-files");
-  const afterFiles = snapshot_files_safe();
-  const changed = new Set([
-    ...Object.keys(beforeFiles),
-    ...Object.keys(afterFiles),
-  ].filter((name) => beforeFiles[name] !== afterFiles[name]));
-  const files = Array.from(changed);
-  if (!files.length) {
-    return { ok: true, restored: [], removed: [] };
-  }
-  const gitFallback = [];
-  const removed = [];
-  const restored = [];
-  for (const rel of files) {
-    const abs = path.join(projectRoot(), rel);
-    const existedBefore = Object.prototype.hasOwnProperty.call(beforeFiles, rel);
-    if (!existedBefore) {
-      if (!fs.existsSync(abs)) continue;
-      removed.push(rel);
-      try {
-        fs.rmSync(abs, { force: true });
-      } catch {}
-      continue;
-    }
-    const backup = path.join(backupDir, rel);
-    if (fs.existsSync(backup)) {
-      ensureDir(path.dirname(abs));
-      fs.copyFileSync(backup, abs);
-      restored.push(rel);
-      continue;
-    }
-    gitFallback.push(rel);
-  }
-  if (gitFallback.length) {
-    const git = resolveCommand("git");
-    if (!git || !hasGitRepository()) {
-      return {
-        ok: false,
-        error: "Undo needs this run's local backup snapshot or a git repository. Re-run the task once with the updated app to get backup-based undo.",
-      };
-    }
-    const result = cp.spawnSync(git, ["restore", "--source=HEAD", "--worktree", "--staged", "--", ...gitFallback], {
-      cwd: projectRoot(),
-      shell: needsShell(git),
-      windowsHide: true,
-      encoding: "utf8",
-    });
-    if (result.status !== 0) {
-      return { ok: false, error: result.stderr || result.stdout || "Undo failed." };
-    }
-  }
-  return { ok: true, restored: [...restored, ...gitFallback], removed };
+  const runDir = path.join(projectRunsDir(), String(runId));
+  return restoreRunFromDir(runDir, projectRoot(), {
+    resolveGit: () => resolveCommand("git"),
+    hasGitRepository: () => hasGitRepository(),
+  });
 }
 
 function snapshot_files_safe() {
@@ -1406,7 +1436,7 @@ ipcMain.handle("run:supervisor", (_event, payload) => {
   return true;
 });
 
-ipcMain.handle("run:supervisor-analyze", (_event, payload) => {
+ipcMain.handle("run:supervisor-analyze", async (_event, payload) => {
   const current = settings();
   const merged = { ...current, ...(payload.settings || {}) };
   const prompt = String(payload.prompt || "").trim();
@@ -1420,13 +1450,12 @@ ipcMain.handle("run:supervisor-analyze", (_event, payload) => {
     throw new Error(`Python command "${current.pythonPath}" was not found in PATH.`);
   }
 
-  const result = cp.spawnSync(
+  const result = await spawnAsync(
     pythonCommand,
     supervisorArgs(promptWithAttachments, false, { ...(payload.settings || {}), requestFeature: feature }, payload.options),
     {
       cwd: projectRoot(),
       shell: needsShell(pythonCommand),
-      windowsHide: true,
       encoding: "utf8",
       env: processEnvForSettings({ ...merged, selectedModel: merged.supervisorManualModel || merged.supervisorModel }),
       timeout: 120000,
@@ -1521,6 +1550,29 @@ ipcMain.handle("run:direct", (_event, payload) => {
     route: payload.routeDecision || { route: "manual_direct" },
     created_at: new Date().toISOString(),
   });
+  const directRunOptions = payload.options || {};
+  const directProjectAiDir = detached ? APP_AI_DIR : projectAiDir();
+  const directGate = policy.preflight({
+    projectAiDir: directProjectAiDir,
+    model: directModel,
+    reasoning: directReasoning,
+    promptText: fullPrompt,
+    budgetGuard: merged.budgetGuard !== false,
+    approvalGranted: Boolean(directRunOptions.approveHigh),
+    forceBudget: Boolean(directRunOptions.forceBudget),
+  });
+  if (!directGate.ok) {
+    writeJson(path.join(runDir, "audit.json"), {
+      status: directGate.reason,
+      changed_files: [],
+      scope_warnings: [],
+      codex_ok: false,
+      codex_returncode: null,
+      budget: directGate.budgetStatus,
+      created_at: new Date().toISOString(),
+    });
+    throw new Error(directGate.error);
+  }
   const beforeSnapshot = detached ? {} : snapshot_files_safe();
   writeJson(path.join(runDir, "before-state.json"), { git: { has_git: detached ? false : hasGitRepository() }, files: beforeSnapshot });
   if (!detached) backupBeforeFiles(runDir, beforeSnapshot);
@@ -1561,7 +1613,7 @@ ipcMain.handle("run:direct", (_event, payload) => {
         codex_returncode: code,
         created_at: new Date().toISOString(),
       });
-      writeJson(path.join(runDir, "usage.json"), buildUsageReport({
+      const usage = buildUsageReport({
         model: directModel,
         reasoning: directReasoning,
         prompt: fullPrompt,
@@ -1570,7 +1622,23 @@ ipcMain.handle("run:direct", (_event, payload) => {
         lastMessage,
         startedAt,
         routeDecision: payload.routeDecision || { route: "manual_direct" },
-      }));
+      });
+      writeJson(path.join(runDir, "usage.json"), usage);
+      try {
+        const actualCost = Number(usage?.cost?.actual_usd);
+        const estimatedCost = Number(usage?.cost?.estimated_usd);
+        const ledgerCost = Number.isFinite(actualCost) && actualCost > 0
+          ? actualCost
+          : (Number.isFinite(estimatedCost) ? estimatedCost : directGate.budgetStatus.estimated_cost_usd);
+        policy.appendLedger(directProjectAiDir, {
+          runId: directRunId,
+          model: directModel,
+          reasoning: directReasoning,
+          cost: ledgerCost,
+        });
+      } catch (error) {
+        console.error("Direct run ledger append failed:", error);
+      }
     },
   });
   return true;
@@ -1758,7 +1826,7 @@ ipcMain.handle("workspace:removeProject", (_event, root) => {
   return current;
 });
 
-ipcMain.handle("workspace:refreshProjectSummary", (_event, root) => refreshProjectSummary(root));
+ipcMain.handle("workspace:refreshProjectSummary", async (_event, root) => refreshProjectSummary(root));
 
 ipcMain.handle("budget:save", (_event, value) => {
   const file = path.join(projectAiDir(), "budget", "budget.json");
@@ -1793,3 +1861,28 @@ app.on("window-all-closed", () => {
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) createWindow();
 });
+
+// Exposed for unit testing only. Electron's main entry point does not read its
+// own module exports, so this block is harmless at runtime.
+module.exports = {
+  attachmentKind,
+  allowedModelSet,
+  commandExists,
+  extractCliTokenUsage,
+  formatArg,
+  isReadableTextAttachment,
+  isSnapshotIgnored,
+  listRuns,
+  modelContextLimit,
+  modelTokenPrices,
+  needsShell,
+  normalizeModelName,
+  normalizeRel,
+  nowRunId,
+  providerBaseUrl,
+  providerForModel,
+  runMtime,
+  runSortKeys,
+  tokenCost,
+  validationCommandForRun,
+};
