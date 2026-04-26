@@ -95,6 +95,17 @@ function restoreRunFromDir(runDir, root, options = {}) {
       drifted: drifted.sort(),
     };
   }
+  let git = null;
+  if (safeForGitFallback.length) {
+    git = options.resolveGit ? options.resolveGit() : null;
+    const haveGit = options.hasGitRepository ? options.hasGitRepository() : false;
+    if (!git || !haveGit) {
+      return {
+        ok: false,
+        error: "Undo needs this run's local backup snapshot or a git repository. Re-run the task once with the updated app to get backup-based undo.",
+      };
+    }
+  }
   const removed = [];
   const restored = [];
   for (const rel of safeForRemoval) {
@@ -113,14 +124,6 @@ function restoreRunFromDir(runDir, root, options = {}) {
     restored.push(rel);
   }
   if (safeForGitFallback.length) {
-    const git = options.resolveGit ? options.resolveGit() : null;
-    const haveGit = options.hasGitRepository ? options.hasGitRepository() : false;
-    if (!git || !haveGit) {
-      return {
-        ok: false,
-        error: "Undo needs this run's local backup snapshot or a git repository. Re-run the task once with the updated app to get backup-based undo.",
-      };
-    }
     const result = cp.spawnSync(git, ["restore", "--source=HEAD", "--worktree", "--staged", "--", ...safeForGitFallback], {
       cwd: root,
       shell: needsShell(git),

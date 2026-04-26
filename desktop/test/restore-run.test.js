@@ -154,6 +154,30 @@ test("drift: detects when user re-creates a file the run never produced", () => 
   assert.equal(fs.readFileSync(path.join(root, "deleted.txt"), "utf8"), "user re-created\n");
 });
 
+test("fallback preflight: missing git aborts before removing run-created files", () => {
+  const { root, runDir } = makeWorld();
+  const original = Buffer.from("original without backup\n");
+  const runChanged = Buffer.from("changed by run\n");
+  const created = Buffer.from("created by run\n");
+  writeFile(root, "fallback.txt", runChanged);
+  writeFile(root, "created.txt", created);
+  recordStates(
+    runDir,
+    { "fallback.txt": sha256(original) },
+    { "fallback.txt": sha256(runChanged), "created.txt": sha256(created) },
+  );
+
+  const result = restoreRunFromDir(runDir, root, {
+    resolveGit: () => null,
+    hasGitRepository: () => false,
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /backup snapshot or a git repository/);
+  assert.equal(fs.readFileSync(path.join(root, "created.txt"), "utf8"), "created by run\n", "run-created file must not be removed after preflight failure");
+  assert.equal(fs.readFileSync(path.join(root, "fallback.txt"), "utf8"), "changed by run\n", "fallback file must not be changed after preflight failure");
+});
+
 test("legacy run without after-state files map: refuses undo (does not delete anything)", () => {
   const { root, runDir } = makeWorld();
   const created = Buffer.from("from run\n");
