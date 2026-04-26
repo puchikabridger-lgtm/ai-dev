@@ -216,5 +216,6 @@ assert.ok(latestUsage.context.used_percent >= 0, "usage should record context fi
 assert.ok(latestUsage.cost.estimated_usd >= 0, "usage should record cost estimate");
 
 cp.execFileSync(process.execPath, [path.resolve(__dirname, "spawn-async.test.js")], { stdio: "inherit" });
+cp.execFileSync(process.execPath, [path.resolve(__dirname, "restore-run.test.js")], { stdio: "inherit" });
 
 console.log("Smoke checks passed.");
