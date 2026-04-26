@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const cp = require("child_process");
 const crypto = require("crypto");
+const { restoreRunFromDir } = require("./restore-run");
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
 const APP_AI_DIR = path.join(APP_ROOT, ".ai");
@@ -1109,64 +1110,11 @@ function runValidation(runId) {
 }
 
 function restoreRun(runId) {
-  const run = readRun(runId);
-  if (!run) {
-    return { ok: false, error: "Run not found." };
-  }
-  const before = readJson(path.join(run.path, "before-state.json"), {});
-  const beforeFiles = before.files || {};
-  const backupDir = path.join(run.path, "before-files");
-  const afterFiles = snapshot_files_safe();
-  const changed = new Set([
-    ...Object.keys(beforeFiles),
-    ...Object.keys(afterFiles),
-  ].filter((name) => beforeFiles[name] !== afterFiles[name]));
-  const files = Array.from(changed);
-  if (!files.length) {
-    return { ok: true, restored: [], removed: [] };
-  }
-  const gitFallback = [];
-  const removed = [];
-  const restored = [];
-  for (const rel of files) {
-    const abs = path.join(projectRoot(), rel);
-    const existedBefore = Object.prototype.hasOwnProperty.call(beforeFiles, rel);
-    if (!existedBefore) {
-      if (!fs.existsSync(abs)) continue;
-      removed.push(rel);
-      try {
-        fs.rmSync(abs, { force: true });
-      } catch {}
-      continue;
-    }
-    const backup = path.join(backupDir, rel);
-    if (fs.existsSync(backup)) {
-      ensureDir(path.dirname(abs));
-      fs.copyFileSync(backup, abs);
-      restored.push(rel);
-      continue;
-    }
-    gitFallback.push(rel);
-  }
-  if (gitFallback.length) {
-    const git = resolveCommand("git");
-    if (!git || !hasGitRepository()) {
-      return {
-        ok: false,
-        error: "Undo needs this run's local backup snapshot or a git repository. Re-run the task once with the updated app to get backup-based undo.",
-      };
-    }
-    const result = cp.spawnSync(git, ["restore", "--source=HEAD", "--worktree", "--staged", "--", ...gitFallback], {
-      cwd: projectRoot(),
-      shell: needsShell(git),
-      windowsHide: true,
-      encoding: "utf8",
-    });
-    if (result.status !== 0) {
-      return { ok: false, error: result.stderr || result.stdout || "Undo failed." };
-    }
-  }
-  return { ok: true, restored: [...restored, ...gitFallback], removed };
+  const runDir = path.join(projectRunsDir(), String(runId));
+  return restoreRunFromDir(runDir, projectRoot(), {
+    resolveGit: () => resolveCommand("git"),
+    hasGitRepository: () => hasGitRepository(),
+  });
 }
 
 function snapshot_files_safe() {
