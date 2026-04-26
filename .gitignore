@@ -10,8 +10,14 @@ __pycache__/
 .venv/
 venv/
 
-# AI Dev generated runtime data and local memory
-.ai/
+# AI Dev workspace: ignore runtime data, but track plans/rules/config templates
+.ai/runs/
+.ai/summaries/
+.ai/budget/ledger.jsonl
+.ai/config/discovered.json
+.ai/desktop/
+.ai/project/index.json
+.ai/project/file-index.json
 
 # Secrets and local environment
 .env

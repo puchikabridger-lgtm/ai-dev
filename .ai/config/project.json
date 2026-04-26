@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "backend": {
+    "default": "codex_cli",
+    "codex_cli_command": "codex",
+    "sandbox": "workspace-write",
+    "skip_git_repo_check": true,
+    "timeout_seconds": 1800
+  },
+  "models": {
+    "router": "gpt-5.4-mini",
+    "executor_default": "gpt-5.4-mini",
+    "executor_complex": "gpt-5.4",
+    "executor_max": "gpt-5.5",
+    "supervisor": "gpt-5.4-mini",
+    "catalog": []
+  },
+  "reasoning": {
+    "default": "none",
+    "prefer": [
+      "none",
+      "low",
+      "medium"
+    ],
+    "requires_approval": [
+      "high",
+      "xhigh"
+    ]
+  },
+  "approval": {
+    "ask_for_high": true,
+    "ask_for_xhigh": true,
+    "remember_approvals": true
+  },
+  "execution": {
+    "default_execute": false,
+    "max_changed_files_low": 3,
+    "max_changed_files_medium": 12,
+    "max_auto_retries": 1
+  },
+  "supervisor": {
+    "model": "gpt-5.4-mini",
+    "reasoning": "low"
+  }
+}
