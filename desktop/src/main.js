@@ -7,6 +7,16 @@ const snapshot = require("./snapshot");
 const policy = require("./policy");
 const { spawnAsync } = require("./spawn-async");
 const { restoreRunFromDir } = require("./restore-run");
+const settingsStore = require("./settings-store");
+const {
+  ensureDir,
+  readJson,
+  writeJson,
+  readText,
+  backupFileOncePerMinute,
+  nonEmptyChatSessions,
+  sanitizedSettings,
+} = settingsStore;
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
 const APP_AI_DIR = path.join(APP_ROOT, ".ai");
@@ -126,10 +136,6 @@ function createWindow() {
   mainWindow.loadFile(path.join(__dirname, "renderer", "index.html"));
 }
 
-function ensureDir(dir) {
-  fs.mkdirSync(dir, { recursive: true });
-}
-
 function ensureWorkspace(root = projectRoot()) {
   const aiDir = path.join(root, ".ai");
   ensureDir(aiDir);
@@ -158,41 +164,6 @@ function ensureGlobalMemory() {
   return dir;
 }
 
-function readJson(file, fallback) {
-  try {
-    return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(file, value) {
-  ensureDir(path.dirname(file));
-  fs.writeFileSync(file, JSON.stringify(value, null, 2) + "\n", "utf8");
-}
-
-function backupFileOncePerMinute(file, label) {
-  if (!fs.existsSync(file)) return;
-  const now = new Date();
-  const stamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-    String(now.getHours()).padStart(2, "0"),
-    String(now.getMinutes()).padStart(2, "0"),
-  ].join("");
-  const backup = path.join(path.dirname(file), `${path.basename(file, ".json")}.${label}-${stamp}.json`);
-  if (!fs.existsSync(backup)) {
-    fs.copyFileSync(file, backup);
-  }
-}
-
-function nonEmptyChatSessions(value) {
-  const sessions = value?.chatSessions;
-  if (!sessions || typeof sessions !== "object") return false;
-  return Object.values(sessions).some((items) => Array.isArray(items) && items.length);
-}
-
 function secretsFile() {
   return path.join(app.getPath("userData"), "secrets.json");
 }
@@ -200,14 +171,6 @@ function secretsFile() {
 function authSecrets() {
   const secrets = readJson(secretsFile(), {});
   return secrets && typeof secrets === "object" ? secrets : {};
-}
-
-function sanitizedSettings(value) {
-  const next = { ...(value || {}) };
-  next.auth = { ...(next.auth || {}) };
-  delete next.auth.openaiApiKey;
-  delete next.auth.anthropicApiKey;
-  return next;
 }
 
 function persistAuthSecrets(value) {
@@ -222,14 +185,6 @@ function persistAuthSecrets(value) {
   }
   writeJson(secretsFile(), next);
   return next;
-}
-
-function readText(file) {
-  try {
-    return fs.readFileSync(file, "utf8");
-  } catch {
-    return "";
-  }
 }
 
 function settings() {

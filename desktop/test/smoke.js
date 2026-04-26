@@ -81,7 +81,7 @@ for (const channel of REQUIRED_IPC_HANDLERS) {
 assert.match(mainJs, /AIDEV_GLOBAL_RULES_DIR/, "global user memory should be passed to subprocesses");
 assert.match(mainJs, /AIDEV_PROJECT_ROOT/, "project root should be passed explicitly to subprocesses");
 assert.match(mainJs, /function secretsFile\(/, "auth secrets should be stored outside project settings");
-assert.match(mainJs, /delete next\.auth\.openaiApiKey/, "OpenAI key must not be persisted in project settings");
+assert.match(read("src/settings-store.js"), /delete next\.auth\.openaiApiKey/, "OpenAI key must not be persisted in project settings (now in settings-store.js)");
 assert.match(mainJs, /backupFileOncePerMinute/, "settings saves should create safety backups");
 assert.match(mainJs, /nonEmptyChatSessions/, "settings saves should preserve existing chat history");
 assert.match(mainJs, /detached \? "read-only"/, "standalone chats should run in read-only sandbox");
