@@ -19,6 +19,11 @@ venv/
 .ai/project/index.json
 .ai/project/file-index.json
 
+# Stray .ai/ bootstraps if aidev.py is ever run from a subfolder
+desktop/.ai/
+vscode-aidev/.ai/
+scripts/.ai/
+
 # Secrets and local environment
 .env
 .env.*
