@@ -19,7 +19,12 @@
 const path = require("path");
 const Module = require("module");
 
-const electronPath = require.resolve("electron");
+const electronPath = path.join(__dirname, "__electron_stub__.js");
+const originalResolveFilename = Module._resolveFilename;
+Module._resolveFilename = function resolveElectronStub(request, parent, isMain, options) {
+  if (request === "electron") return electronPath;
+  return originalResolveFilename.call(this, request, parent, isMain, options);
+};
 
 const stubApp = {
   whenReady: () => new Promise(() => {}),

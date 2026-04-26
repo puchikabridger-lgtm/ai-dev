@@ -19,6 +19,27 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
 const SETTINGS_FILE = path.join(REPO_ROOT, ".ai", "desktop", "settings.json");
 const SETTINGS_BACKUP = `${SETTINGS_FILE}.test-backup`;
 
+function assertShellCommand(actual, display) {
+  assert.equal(actual.display, display);
+  assert.equal(actual.argv, null);
+  assert.equal(actual.shellString, display);
+}
+
+function assertNpmCommand(actual, display, args) {
+  assert.equal(actual.display, display);
+  assert.ok(Array.isArray(actual.argv), "expected argv command");
+  assert.match(path.basename(actual.argv[0]), /^npm(\.cmd)?$/i);
+  assert.deepEqual(actual.argv.slice(1), args);
+  assert.equal(actual.shellString, null);
+}
+
+function assertPythonCommand(actual, display, args) {
+  assert.equal(actual.display, display);
+  assert.ok(Array.isArray(actual.argv), "expected argv command");
+  assert.match(path.basename(actual.argv[0]), /^python(3)?(\.exe)?$/i);
+  assert.deepEqual(actual.argv.slice(1), args);
+  assert.equal(actual.shellString, null);
+}
 
 function backupSettings() {
   if (fs.existsSync(SETTINGS_FILE) && !fs.existsSync(SETTINGS_BACKUP)) {
@@ -81,7 +102,7 @@ test("validationCommandForRun honors explicit project config validation.command"
   });
 
   const cmd = main.validationCommandForRun({ audit: { changed_files: ["src/app.js"] } });
-  assert.equal(cmd, "make verify");
+  assertShellCommand(cmd, "make verify");
 });
 
 test("validationCommandForRun picks `npm run check` when js changed and `check` script exists", (t) => {
@@ -94,7 +115,7 @@ test("validationCommandForRun picks `npm run check` when js changed and `check` 
   });
 
   const cmd = main.validationCommandForRun({ audit: { changed_files: ["src/main.js"] } });
-  assert.equal(cmd, "npm run check");
+  assertNpmCommand(cmd, "npm run check", ["run", "check"]);
 });
 
 test("validationCommandForRun picks `npm test` when js changed and only `test` script exists", (t) => {
@@ -107,7 +128,7 @@ test("validationCommandForRun picks `npm test` when js changed and only `test` s
   });
 
   const cmd = main.validationCommandForRun({ audit: { changed_files: ["src/main.js"] } });
-  assert.equal(cmd, "npm test");
+  assertNpmCommand(cmd, "npm test", ["test"]);
 });
 
 test("validationCommandForRun picks `npm run lint` when only `lint` script exists for js changes", (t) => {
@@ -120,7 +141,7 @@ test("validationCommandForRun picks `npm run lint` when only `lint` script exist
   });
 
   const cmd = main.validationCommandForRun({ audit: { changed_files: ["src/main.js"] } });
-  assert.equal(cmd, "npm run lint");
+  assertNpmCommand(cmd, "npm run lint", ["run", "lint"]);
 });
 
 test("validationCommandForRun builds python -m py_compile for python changes only", (t) => {
@@ -133,7 +154,7 @@ test("validationCommandForRun builds python -m py_compile for python changes onl
   });
 
   const cmd = main.validationCommandForRun({ audit: { changed_files: ["aidev.py"] } });
-  assert.equal(cmd, "python -m py_compile aidev.py");
+  assertPythonCommand(cmd, "python -m py_compile aidev.py", ["-m", "py_compile", "aidev.py"]);
 });
 
 test("validationCommandForRun quotes python paths with spaces (no shell injection)", (t) => {
@@ -149,7 +170,11 @@ test("validationCommandForRun quotes python paths with spaces (no shell injectio
     audit: { changed_files: ["a/b c/script.py", "ok/path.py"] },
   });
   // formatArg quotes the spaced one and leaves the simple one alone.
-  assert.equal(cmd, 'python -m py_compile "a/b c/script.py" ok/path.py');
+  assertPythonCommand(
+    cmd,
+    'python -m py_compile "a/b c/script.py" ok/path.py',
+    ["-m", "py_compile", "a/b c/script.py", "ok/path.py"],
+  );
 });
 
 test("validationCommandForRun excludes non-py files from the py_compile arg list", (t) => {
@@ -164,7 +189,7 @@ test("validationCommandForRun excludes non-py files from the py_compile arg list
   const cmd = main.validationCommandForRun({
     audit: { changed_files: ["a.py", "README.md", "b.py"] },
   });
-  assert.equal(cmd, "python -m py_compile a.py b.py");
+  assertPythonCommand(cmd, "python -m py_compile a.py b.py", ["-m", "py_compile", "a.py", "b.py"]);
 });
 
 test("validationCommandForRun falls back to npm test/check when only non-code files changed", (t) => {
@@ -177,7 +202,7 @@ test("validationCommandForRun falls back to npm test/check when only non-code fi
   });
 
   const cmd = main.validationCommandForRun({ audit: { changed_files: ["README.md"] } });
-  assert.equal(cmd, "npm test");
+  assertNpmCommand(cmd, "npm test", ["test"]);
 });
 
 test("validationCommandForRun returns empty string when nothing applies", (t) => {
@@ -190,7 +215,7 @@ test("validationCommandForRun returns empty string when nothing applies", (t) =>
   });
 
   const cmd = main.validationCommandForRun({ audit: { changed_files: ["README.md"] } });
-  assert.equal(cmd, "");
+  assert.equal(cmd, null);
 });
 
 test("validationCommandForRun handles missing audit/changed_files gracefully", (t) => {
@@ -203,9 +228,9 @@ test("validationCommandForRun handles missing audit/changed_files gracefully", (
   });
 
   // No audit at all.
-  assert.equal(main.validationCommandForRun({}), "npm test");
+  assertNpmCommand(main.validationCommandForRun({}), "npm test", ["test"]);
   // changed_files missing.
-  assert.equal(main.validationCommandForRun({ audit: {} }), "npm test");
+  assertNpmCommand(main.validationCommandForRun({ audit: {} }), "npm test", ["test"]);
   // changed_files not an array.
-  assert.equal(main.validationCommandForRun({ audit: { changed_files: null } }), "npm test");
+  assertNpmCommand(main.validationCommandForRun({ audit: { changed_files: null } }), "npm test", ["test"]);
 });
