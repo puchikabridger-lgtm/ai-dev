@@ -95,7 +95,7 @@ assert.match(rendererJs, /payload\.run\?\.contract/, "codex start step should di
 assert.match(rendererJs, /Supervisor plan/, "planned-only runs should not be labeled as Codex answers");
 assert.match(rendererJs, /No files were changed because this was a planning-only run/, "planned-only runs should explain why there are no file changes");
 assert.match(mainJs, /Conversation context:/, "direct prompt does not include conversation context");
-assert.match(mainJs, /before-files/, "run snapshots are missing");
+assert.match(mainJs, /snapshot\.(backupBeforeFilesIn|gitTrackedFiles)/, "run snapshots are missing");
 assert.match(mainJs, /routeDecision/, "direct route decisions are not persisted");
 assert.match(mainJs, /payload\.detached/, "standalone chat direct route is missing");
 assert.match(mainJs, /payload\.supervisorMode/, "standalone chat supervisor toggle is missing");
@@ -216,5 +216,8 @@ assert.ok(latestUsage.context.used_percent >= 0, "usage should record context fi
 assert.ok(latestUsage.cost.estimated_usd >= 0, "usage should record cost estimate");
 
 cp.execFileSync(process.execPath, [path.resolve(__dirname, "snapshot.test.js")], { stdio: "inherit" });
+cp.execFileSync(process.execPath, [path.resolve(__dirname, "policy.test.js")], { stdio: "inherit" });
+cp.execFileSync(process.execPath, [path.resolve(__dirname, "spawn-async.test.js")], { stdio: "inherit" });
+cp.execFileSync(process.execPath, [path.resolve(__dirname, "restore-run.test.js")], { stdio: "inherit" });
 
 console.log("Smoke checks passed.");
