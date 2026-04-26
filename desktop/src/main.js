@@ -1059,42 +1059,86 @@ function readRun(runId) {
   };
 }
 
+function npmArgv(...scriptArgs) {
+  const npm = resolveCommand("npm") || "npm";
+  return [npm, ...scriptArgs];
+}
+
+function pythonArgv(...args) {
+  const py = resolveCommand("python") || resolveCommand("python3") || "python";
+  return [py, ...args];
+}
+
 function validationCommandForRun(run) {
   const config = projectConfig();
   const commands = packageCommands(projectRoot());
   const changed = Array.isArray(run?.audit?.changed_files) ? run.audit.changed_files : [];
   const named = commands.map((item) => item.name);
-  if (config.validation?.command) return config.validation.command;
-  if (changed.some((file) => /\.(js|jsx|ts|tsx|css|html)$/i.test(file))) {
-    if (named.includes("check")) return "npm run check";
-    if (named.includes("test")) return "npm test";
-    if (named.includes("lint")) return "npm run lint";
+  const cfg = config.validation || {};
+  if (Array.isArray(cfg.argv) && cfg.argv.length) {
+    const argv = cfg.argv.map((value) => String(value));
+    return { argv, display: argv.map(formatArg).join(" "), shellString: null };
   }
-  if (changed.some((file) => /\.py$/i.test(file))) return "python -m py_compile " + changed.filter((file) => /\.py$/i.test(file)).map(formatArg).join(" ");
-  if (named.includes("test")) return "npm test";
-  if (named.includes("check")) return "npm run check";
-  return "";
+  if (typeof cfg.command === "string" && cfg.command.trim()) {
+    return { argv: null, display: cfg.command, shellString: cfg.command };
+  }
+  if (changed.some((file) => /\.(js|jsx|ts|tsx|css|html)$/i.test(file))) {
+    if (named.includes("check")) {
+      const argv = npmArgv("run", "check");
+      return { argv, display: "npm run check", shellString: null };
+    }
+    if (named.includes("test")) {
+      const argv = npmArgv("test");
+      return { argv, display: "npm test", shellString: null };
+    }
+    if (named.includes("lint")) {
+      const argv = npmArgv("run", "lint");
+      return { argv, display: "npm run lint", shellString: null };
+    }
+  }
+  if (changed.some((file) => /\.py$/i.test(file))) {
+    const pyFiles = changed.filter((file) => /\.py$/i.test(file));
+    const argv = pythonArgv("-m", "py_compile", ...pyFiles);
+    const display = ["python", "-m", "py_compile", ...pyFiles].map(formatArg).join(" ");
+    return { argv, display, shellString: null };
+  }
+  if (named.includes("test")) {
+    const argv = npmArgv("test");
+    return { argv, display: "npm test", shellString: null };
+  }
+  if (named.includes("check")) {
+    const argv = npmArgv("run", "check");
+    return { argv, display: "npm run check", shellString: null };
+  }
+  return null;
 }
 
 function runValidation(runId) {
   const run = readRun(runId);
   if (!run) throw new Error("Run not found.");
-  const commandLine = validationCommandForRun(run);
-  if (!commandLine) throw new Error("No validation command detected for this project.");
+  const detected = validationCommandForRun(run);
+  if (!detected) throw new Error("No validation command detected for this project.");
   const logFile = path.join(run.path, "validation-log.txt");
   const validationFile = path.join(run.path, "validation.json");
-  const shellCommand = process.platform === "win32" ? "powershell.exe" : "sh";
-  const shellArgs = process.platform === "win32"
-    ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", commandLine]
-    : ["-lc", commandLine];
-  spawnProcess(shellCommand, shellArgs, {
+  let spawnCommand;
+  let spawnArgs;
+  if (detected.argv) {
+    spawnCommand = detected.argv[0];
+    spawnArgs = detected.argv.slice(1);
+  } else {
+    spawnCommand = process.platform === "win32" ? "powershell.exe" : "sh";
+    spawnArgs = process.platform === "win32"
+      ? ["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", detected.shellString]
+      : ["-lc", detected.shellString];
+  }
+  spawnProcess(spawnCommand, spawnArgs, {
     id: `validate-${runId}`,
     title: "Validate Run",
     phase: "validate",
     logPath: logFile,
     onClose: ({ code, signal, stdout, stderr, startedAt }) => {
       writeJson(validationFile, {
-        command: commandLine,
+        command: detected.display,
         status: code === 0 ? "passed" : "failed",
         code,
         signal,
@@ -1105,7 +1149,7 @@ function runValidation(runId) {
       });
     },
   });
-  return { ok: true, command: commandLine };
+  return { ok: true, command: detected.display };
 }
 
 function restoreRun(runId) {
