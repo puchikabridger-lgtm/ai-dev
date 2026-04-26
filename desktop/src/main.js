@@ -17,6 +17,7 @@ const {
   nonEmptyChatSessions,
   sanitizedSettings,
 } = settingsStore;
+const { createProjectPaths } = require("./projects");
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
 const APP_AI_DIR = path.join(APP_ROOT, ".ai");
@@ -310,38 +311,20 @@ function touchProject(root, extra = {}) {
   return current;
 }
 
-function projectRoot() {
-  const root = settings().projectRoot || APP_ROOT;
-  return path.resolve(root);
-}
-
-function projectAiDir() {
-  return path.join(projectRoot(), ".ai");
-}
-
-function projectRunsDir() {
-  return path.join(projectAiDir(), "runs");
-}
-
-function projectDesktopDir() {
-  return path.join(projectAiDir(), "desktop");
-}
-
-function aidevScript() {
-  return path.join(APP_ROOT, "aidev.py");
-}
+const _projectPaths = createProjectPaths({ getSettings: settings, appRoot: APP_ROOT });
+const {
+  projectRoot,
+  projectAiDir,
+  projectRunsDir,
+  projectDesktopDir,
+  projectIndexFile,
+  terminalHistoryFile,
+  aidevScript,
+} = _projectPaths;
 
 function projectConfig() {
   ensureWorkspace();
   return readJson(path.join(projectAiDir(), "config", "project.json"), {});
-}
-
-function projectIndexFile() {
-  return path.join(projectAiDir(), "project", "index.json");
-}
-
-function terminalHistoryFile() {
-  return path.join(projectDesktopDir(), "terminal-history.json");
 }
 
 function sourceKind(rel) {
