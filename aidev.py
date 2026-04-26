@@ -971,6 +971,7 @@ SNAPSHOT_IGNORED_PATHS = {
 }
 
 SNAPSHOT_IGNORED_EXTENSIONS = {".log", ".tmp", ".bak"}
+SNAPSHOT_MAX_BACKUP_BYTES = 2 * 1024 * 1024
 
 
 def is_snapshot_ignored(rel: str) -> bool:
@@ -989,8 +990,38 @@ def is_snapshot_ignored(rel: str) -> bool:
     return any(part in SNAPSHOT_IGNORED_DIRS for part in parts)
 
 
+def git_tracked_files(root: Path) -> set[str] | None:
+    git = shutil.which("git")
+    if not git:
+        return None
+    inside = run_cmd([git, "rev-parse", "--is-inside-work-tree"], cwd=root, timeout=20)
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return None
+    result = subprocess.run(
+        [git, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=str(root),
+        capture_output=True,
+        timeout=120,
+        shell=False,
+    )
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.decode("utf-8", "replace")
+    return {part.replace("\\", "/") for part in raw.split("\0") if part}
+
+
 def snapshot_files() -> dict[str, str]:
     result: dict[str, str] = {}
+    tracked = git_tracked_files(ROOT)
+    if tracked is not None:
+        for rel in tracked:
+            if is_snapshot_ignored(rel):
+                continue
+            source = ROOT / rel
+            if not source.is_file():
+                continue
+            result[rel] = file_hash(source)
+        return result
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
@@ -1003,18 +1034,35 @@ def snapshot_files() -> dict[str, str]:
 
 def backup_before_files(run_dir: Path, before_snapshot: dict[str, str]) -> None:
     backup_dir = run_dir / "before-files"
+    backed = 0
+    skipped_oversized = 0
     for rel in before_snapshot:
         if is_snapshot_ignored(rel):
             continue
         source = ROOT / rel
         if not source.is_file():
             continue
+        try:
+            size = source.stat().st_size
+        except OSError:
+            continue
+        if size > SNAPSHOT_MAX_BACKUP_BYTES:
+            skipped_oversized += 1
+            continue
         target = backup_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             shutil.copy2(source, target)
+            backed += 1
         except OSError:
             pass
+    if backed or skipped_oversized:
+        write_json(run_dir / "before-files-manifest.json", {
+            "backed_up": backed,
+            "skipped_oversized": skipped_oversized,
+            "max_backup_bytes": SNAPSHOT_MAX_BACKUP_BYTES,
+            "created_at": dt.datetime.now().isoformat(),
+        })
 
 
 def changed_files(before_snapshot: dict[str, str]) -> list[str]:
