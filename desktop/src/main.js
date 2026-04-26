@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const cp = require("child_process");
 const crypto = require("crypto");
+const snapshot = require("./snapshot");
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
 const APP_AI_DIR = path.join(APP_ROOT, ".ai");
@@ -631,6 +632,7 @@ const SNAPSHOT_IGNORED_PATHS = new Set([
   ".ai/budget/ledger.jsonl",
 ]);
 const SNAPSHOT_IGNORED_EXTENSIONS = new Set([".log", ".tmp", ".bak"]);
+const SNAPSHOT_MAX_BACKUP_BYTES = 2 * 1024 * 1024;
 
 function normalizeRel(file) {
   return file.split(path.sep).join("/");
@@ -671,6 +673,21 @@ function snapshot_files() {
   const root = projectRoot();
   const result = {};
   if (!fs.existsSync(root)) return result;
+  const git = resolveCommand("git");
+  const tracked = git ? snapshot.gitTrackedFiles(root, { gitPath: git }) : null;
+  if (tracked) {
+    for (const rel of tracked) {
+      if (isSnapshotIgnored(rel)) continue;
+      const abs = path.join(root, rel);
+      try {
+        if (!fs.statSync(abs).isFile()) continue;
+      } catch {
+        continue;
+      }
+      result[rel] = fileHash(abs);
+    }
+    return result;
+  }
   for (const file of walkFiles(root)) {
     const rel = normalizeRel(path.relative(root, file));
     result[rel] = fileHash(file);
@@ -679,16 +696,10 @@ function snapshot_files() {
 }
 
 function backupBeforeFiles(runDir, beforeSnapshot) {
-  const root = projectRoot();
-  const backupDir = path.join(runDir, "before-files");
-  for (const rel of Object.keys(beforeSnapshot || {})) {
-    if (isSnapshotIgnored(rel)) continue;
-    const source = path.join(root, rel);
-    if (!fs.existsSync(source) || !fs.statSync(source).isFile()) continue;
-    const target = path.join(backupDir, rel);
-    ensureDir(path.dirname(target));
-    fs.copyFileSync(source, target);
-  }
+  return snapshot.backupBeforeFilesIn(projectRoot(), runDir, beforeSnapshot, {
+    isSnapshotIgnored,
+    maxBytes: SNAPSHOT_MAX_BACKUP_BYTES,
+  });
 }
 
 function changedFiles(beforeSnapshot, afterSnapshot = snapshot_files_safe()) {
