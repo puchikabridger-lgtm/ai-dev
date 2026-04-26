@@ -614,9 +614,10 @@ function hasGitRepository() {
 }
 
 function nowRunId(prefix = "") {
-  const iso = new Date().toISOString().replace(/[-:]/g, "").replace("T", "-");
+  const now = new Date();
+  const iso = now.toISOString().replace(/[-:]/g, "").replace("T", "-");
   const stamp = iso.slice(0, 15);
-  const millis = iso.slice(15, 18);
+  const millis = String(now.getMilliseconds()).padStart(3, "0");
   const suffix = crypto.randomBytes(3).toString("hex");
   return `${stamp}-${millis}-${prefix ? `${prefix}-` : ""}${suffix}`;
 }
@@ -991,9 +992,17 @@ function diagnosticsForSettings(merged) {
   };
 }
 
-function runSortTimestamp(dir, contract) {
+function runSortKeys(dir, contract) {
   const created = Date.parse(contract?.created_at || "");
+  let mtimeMs = 0;
+  try {
+    mtimeMs = fs.statSync(dir).mtimeMs;
+  } catch {}
   if (Number.isFinite(created)) return created;
+  return mtimeMs;
+}
+
+function runMtime(dir) {
   try {
     return fs.statSync(dir).mtimeMs;
   } catch {
@@ -1022,11 +1031,12 @@ function listRuns() {
         model: contract.model || "",
         usage,
         request: readText(path.join(dir, "request.md")).trim(),
-        sortKey: runSortTimestamp(dir, contract),
+        sortKey: runSortKeys(dir, contract),
+        mtimeMs: runMtime(dir),
       };
     })
-    .sort((a, b) => b.sortKey - a.sortKey || b.id.localeCompare(a.id))
-    .map(({ sortKey, ...rest }) => rest);
+    .sort((a, b) => b.sortKey - a.sortKey || b.mtimeMs - a.mtimeMs || b.id.localeCompare(a.id))
+    .map(({ sortKey, mtimeMs, ...rest }) => rest);
 }
 
 function readRun(runId) {

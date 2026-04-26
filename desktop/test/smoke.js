@@ -44,6 +44,9 @@ assert.match(mainJs, /providerBaseUrl/, "provider-specific base URL routing is m
 assert.match(mainJs, /normalizeModelName/, "unsupported model aliases should be normalized");
 assert.doesNotMatch(mainJs, /model:\s*"gpt-5\.4-pro"|executor_max:\s*"gpt-5\.4-pro"/, "gpt-5.4-pro should not be a built-in/default model");
 assert.match(mainJs, /gpt-5\.5/, "gpt-5.5 should be available as the max model");
+assert.match(mainJs, /getMilliseconds\(\)\)\.padStart\(3,\s*"0"\)/, "JS run IDs should use three millisecond digits without slicing the ISO decimal point");
+assert.doesNotMatch(mainJs, /slice\(15,\s*18\)/, "JS run IDs should not derive milliseconds by slicing the ISO string");
+assert.match(mainJs, /b\.sortKey - a\.sortKey \|\| b\.mtimeMs - a\.mtimeMs \|\| b\.id\.localeCompare\(a\.id\)/, "desktop run sorting should use mtime before ID tie-breaker");
 
 assert.match(rendererJs, /runDiagnostics\(/, "renderer diagnostics action is missing");
 assert.match(rendererJs, /analyzing prompt\.\.\./, "send flow is missing analyzing step");
