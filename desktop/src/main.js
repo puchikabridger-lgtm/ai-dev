@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const cp = require("child_process");
 const crypto = require("crypto");
+const { spawnAsync } = require("./spawn-async");
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
 const APP_AI_DIR = path.join(APP_ROOT, ".ai");
@@ -263,7 +264,7 @@ function projectSummary(root) {
   return "No summary yet.";
 }
 
-function refreshProjectSummary(root) {
+async function refreshProjectSummary(root) {
   const current = settings();
   const selected = path.resolve(root || projectRoot());
   const fallback = projectSummary(selected);
@@ -276,7 +277,7 @@ function refreshProjectSummary(root) {
       readText(path.join(selected, "README.md")),
     ].join("\n\n").trim().slice(0, 12000);
     if (source) {
-      const result = cp.spawnSync(codex, [
+      const result = await spawnAsync(codex, [
         "exec",
         "-",
         "--cd",
@@ -289,7 +290,6 @@ function refreshProjectSummary(root) {
         input: `Write one short project summary for a sidebar. Max 12 words. No markdown.\n\n${source}`,
         cwd: selected,
         shell: needsShell(codex),
-        windowsHide: true,
         encoding: "utf8",
         env: processEnvForSettings(current),
         timeout: 120000,
@@ -1406,7 +1406,7 @@ ipcMain.handle("run:supervisor", (_event, payload) => {
   return true;
 });
 
-ipcMain.handle("run:supervisor-analyze", (_event, payload) => {
+ipcMain.handle("run:supervisor-analyze", async (_event, payload) => {
   const current = settings();
   const merged = { ...current, ...(payload.settings || {}) };
   const prompt = String(payload.prompt || "").trim();
@@ -1420,13 +1420,12 @@ ipcMain.handle("run:supervisor-analyze", (_event, payload) => {
     throw new Error(`Python command "${current.pythonPath}" was not found in PATH.`);
   }
 
-  const result = cp.spawnSync(
+  const result = await spawnAsync(
     pythonCommand,
     supervisorArgs(promptWithAttachments, false, { ...(payload.settings || {}), requestFeature: feature }, payload.options),
     {
       cwd: projectRoot(),
       shell: needsShell(pythonCommand),
-      windowsHide: true,
       encoding: "utf8",
       env: processEnvForSettings({ ...merged, selectedModel: merged.supervisorManualModel || merged.supervisorModel }),
       timeout: 120000,
@@ -1758,7 +1757,7 @@ ipcMain.handle("workspace:removeProject", (_event, root) => {
   return current;
 });
 
-ipcMain.handle("workspace:refreshProjectSummary", (_event, root) => refreshProjectSummary(root));
+ipcMain.handle("workspace:refreshProjectSummary", async (_event, root) => refreshProjectSummary(root));
 
 ipcMain.handle("budget:save", (_event, value) => {
   const file = path.join(projectAiDir(), "budget", "budget.json");
