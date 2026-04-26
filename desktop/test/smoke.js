@@ -195,9 +195,14 @@ assert.match(helloWorldPlan, /Task type: small_create/, "hello world should be a
 assert.match(helloWorldPlan, /Reasoning: none/, "hello world should use none reasoning");
 assert.match(helloWorldPlan, /Model: gpt-5\.4-mini/, "hello world should use the cheap mini model");
 
-const latestRun = fs.readdirSync(path.resolve(root, "..", ".ai", "runs")).sort().pop();
-const latestPrompt = fs.readFileSync(path.resolve(root, "..", ".ai", "runs", latestRun, "prompt.md"), "utf8");
-const latestUsage = JSON.parse(fs.readFileSync(path.resolve(root, "..", ".ai", "runs", latestRun, "usage.json"), "utf8"));
+const runsDir = path.resolve(root, "..", ".ai", "runs");
+const latestRun = fs.readdirSync(runsDir)
+  .map((name) => ({ name, mtimeMs: fs.statSync(path.join(runsDir, name)).mtimeMs }))
+  .sort((a, b) => a.mtimeMs - b.mtimeMs || a.name.localeCompare(b.name))
+  .pop().name;
+assert.match(latestRun, /^\d{8}-\d{6}-\d{3}-/, "run IDs should include millisecond precision");
+const latestPrompt = fs.readFileSync(path.resolve(runsDir, latestRun, "prompt.md"), "utf8");
+const latestUsage = JSON.parse(fs.readFileSync(path.resolve(runsDir, latestRun, "usage.json"), "utf8"));
 assert.ok(latestPrompt.length < 1900, "low task prompt should stay compact");
 assert.doesNotMatch(latestPrompt, /# Task Contract/, "low task prompt should not include full contract dump");
 assert.match(latestPrompt, /TASK/, "compact prompt should include task section");

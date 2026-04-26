@@ -153,8 +153,10 @@ Rules learned from user corrections will be appended here.
 
 
 def now_id() -> str:
-    stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    return f"{stamp}-{uuid.uuid4().hex[:6]}"
+    now = dt.datetime.now()
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    millis = f"{now.microsecond // 1000:03d}"
+    return f"{stamp}-{millis}-{uuid.uuid4().hex[:6]}"
 
 
 def read_json(path: Path, default: dict[str, Any]) -> dict[str, Any]:
@@ -1443,10 +1445,11 @@ def command_run(args: argparse.Namespace) -> int:
 
 def command_latest(_: argparse.Namespace) -> int:
     ensure_workspace()
-    runs = sorted([p for p in RUNS_DIR.iterdir() if p.is_dir()])
+    runs = [p for p in RUNS_DIR.iterdir() if p.is_dir()]
     if not runs:
         print("No runs yet.")
         return 0
+    runs.sort(key=lambda p: (p.stat().st_mtime_ns, p.name))
     latest = runs[-1]
     print(latest)
     audit = latest / "audit.json"
