@@ -87,30 +87,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
-DEFAULT_BUDGET: dict[str, Any] = {
-    "session_budget_usd": 5.0,
-    "request_budget_usd": 0.50,
-    "retry_budget_usd": 0.15,
-    "max_codex_calls_per_request": 2,
-    "daily_codex_call_limit": 20,
-    "daily_high_call_limit": 3,
-    "daily_xhigh_call_limit": 1,
-    "warn_at_percent": 80,
-    "block_at_percent": 95,
-    "estimated_call_cost_usd": {
-        "none": 0.01,
-        "low": 0.03,
-        "medium": 0.08,
-        "high": 0.25,
-        "xhigh": 0.60
-    },
-    "model_token_prices_usd_per_1m": {
-        "gpt-5.4-mini": {"input": 0.75, "cached_input": 0.075, "output": 4.50, "source": "OpenAI model docs, checked 2026-04-26"},
-        "gpt-5.4": {"input": 2.50, "cached_input": 0.25, "output": 15.00, "source": "OpenAI model docs, checked 2026-04-26"},
-        "gpt-5.5": {"input": 2.50, "cached_input": 0.25, "output": 15.00, "source": "temporary GPT-5.4-compatible estimate until verified pricing is configured"},
-        "gpt-5.4-nano": {"input": 0.20, "cached_input": 0.02, "output": 1.25, "source": "OpenAI model docs, checked 2026-04-26"}
-    }
-}
+SHARED_DIR = Path(__file__).parent / "shared"
+with (SHARED_DIR / "budget-defaults.json").open("r", encoding="utf-8") as _budget_defaults_file:
+    DEFAULT_BUDGET: dict[str, Any] = json.load(_budget_defaults_file)
 
 
 DEFAULT_RULES = {
