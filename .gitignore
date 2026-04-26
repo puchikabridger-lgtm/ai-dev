@@ -1,0 +1,37 @@
+# Dependencies and build output
+node_modules/
+dist/
+build/
+out/
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# AI Dev generated runtime data and local memory
+.ai/
+
+# Secrets and local environment
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*secret*
+*secrets*
+*credential*
+*credentials*
+
+# Local logs and temp files
+*.log
+*.tmp
+*.bak
+*.cache
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/

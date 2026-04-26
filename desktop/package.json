@@ -1,0 +1,16 @@
+{
+  "name": "aidev-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Minimal desktop UI for AI Dev Codex Supervisor.",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "start:project": "electron . --project",
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/renderer/app.js",
+    "smoke": "node test/smoke.js"
+  },
+  "devDependencies": {
+    "electron": "^39.2.6"
+  }
+}

@@ -1,0 +1,310 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Dev</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Local Codex Supervisor</div>
+          <h1>AI Dev</h1>
+        </div>
+        <nav class="top-tabs">
+          <button class="top-tab active" id="chatTab" data-view="chat" title="Chat">Chat</button>
+          <button class="top-tab" id="dashboardTab" data-view="dashboard" title="Dashboard">Dashboard</button>
+          <button class="top-tab" id="authTab" data-view="auth" title="Auth">Auth</button>
+          <button class="top-tab" id="historyTab" data-view="runs" title="History">History</button>
+          <button class="top-tab" id="safetyTab" data-view="rules" title="Safety">Safety</button>
+          <button class="top-tab" id="limitsTab" data-view="budget" title="Limits">Limits</button>
+          <button class="top-tab" id="settingsTab" data-view="settings" title="Settings">Settings</button>
+          <button class="top-tab" id="terminalToggle" type="button" title="Toggle terminal (Ctrl+J)">Terminal</button>
+        </nav>
+        <div class="top-status">
+          <span id="projectName">AI Dev</span>
+          <span id="budgetPill">Budget ready</span>
+          <span id="codexPill">Codex</span>
+        </div>
+      </header>
+
+      <section class="content">
+        <aside class="project-sidebar" id="projectSidebar">
+          <div class="sidebar-actions">
+            <button class="primary wide" id="openDetachedChats">Chats</button>
+            <button class="primary wide" id="startScratchProject">Start From Scratch</button>
+            <button class="ghost wide" id="useExistingProject">Use Existing Folder</button>
+            <button class="ghost wide" id="refreshProjectSummary">Refresh Summary</button>
+            <button class="ghost wide" id="rebuildProjectIndex">Rebuild Index</button>
+          </div>
+          <div class="sidebar-section-title">Projects</div>
+          <div class="project-list" id="projectList"></div>
+          <div class="sidebar-section-title">Standalone</div>
+          <div class="project-list" id="detachedChatList"></div>
+        </aside>
+        <div class="resize-handle" id="leftResize" title="Resize sidebar"></div>
+        <section class="left-panel" id="leftPanel">
+          <div class="panel-head">
+            <h2 id="viewTitle">Chat</h2>
+          </div>
+
+          <div class="view view-active" id="chatView">
+            <div class="chat-main">
+              <div class="chat-grid" id="chatGrid">
+                <div class="chat-column">
+                  <div class="chat-title" id="chatTitle">Chat</div>
+                  <div class="messages" id="supervisorMessages"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer">
+              <div class="prompt-box">
+                <textarea id="promptInput" placeholder="Describe what you want to build or change..."></textarea>
+                <button class="attach-button" id="attachButton" type="button" title="Add files or images" aria-label="Add files or images">+</button>
+              </div>
+              <div class="feature-row" id="featureRow">
+                <button class="feature-chip active" data-feature="auto" type="button">auto</button>
+                <button class="feature-chip" data-feature="code" type="button">/code</button>
+                <button class="feature-chip" data-feature="plan" type="button">/plan</button>
+                <button class="feature-chip" data-feature="todolist" type="button">/todolist</button>
+                <button class="feature-chip" data-feature="discuss" type="button">/discuss</button>
+              </div>
+              <div class="mode-strip composer-mode">
+                <button class="mode active" data-mode="supervisor" type="button">Supervisor</button>
+                <button class="mode" data-mode="direct" type="button">Direct</button>
+              </div>
+              <div class="attachment-tray" id="attachmentTray"></div>
+              <div class="send-status" id="sendStatus">Ready</div>
+              <div class="action-row">
+                <button class="run" id="sendButton" data-testid="send-button">Send</button>
+                <button class="ghost" id="stopButton">Stop</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="view" id="runsView">
+            <div class="run-list" id="runList"></div>
+          </div>
+
+          <div class="view" id="dashboardView">
+            <div class="dashboard" id="dashboardBody"></div>
+          </div>
+
+          <div class="view" id="rulesView">
+            <div class="simple-copy">
+              Global user memory is shared across projects. Project-specific rules can still live in <code>.ai/rules</code>.
+            </div>
+            <div class="toggle-list" id="featureToggles"></div>
+          </div>
+
+          <div class="view" id="budgetView">
+            <div class="settings-grid">
+              <label>Session budget USD <input id="sessionBudget" type="number" min="0" step="0.01" /></label>
+              <label>Request budget USD <input id="requestBudget" type="number" min="0" step="0.01" /></label>
+              <label>Retry budget USD <input id="retryBudget" type="number" min="0" step="0.01" /></label>
+              <label>Max Codex calls per request <input id="maxCalls" type="number" min="1" step="1" /></label>
+              <label>Daily Codex call limit <input id="dailyCalls" type="number" min="1" step="1" /></label>
+              <label>Daily high call limit <input id="dailyHighCalls" type="number" min="0" step="1" /></label>
+              <label>Daily extra high call limit <input id="dailyXhighCalls" type="number" min="0" step="1" /></label>
+              <label>Warn at percent <input id="warnPercent" type="number" min="1" max="100" step="1" /></label>
+              <label>Block at percent <input id="blockPercent" type="number" min="1" max="100" step="1" /></label>
+            </div>
+            <pre id="budgetBox" class="data-block"></pre>
+          </div>
+
+          <div class="view" id="settingsView">
+            <div class="section-title">Project</div>
+            <div class="settings-grid">
+              <label>Current project <input id="projectRoot" readonly /></label>
+            </div>
+            <div class="button-row">
+              <button class="primary" id="openProject">Open Project</button>
+              <button class="run" id="newProject">New Project</button>
+              <button class="ghost" id="openProjectFolder">Open Folder</button>
+              <button class="ghost" id="openAiFolder">Open .ai</button>
+            </div>
+
+            <div class="section-title">Runtime</div>
+            <div class="settings-grid">
+              <label>Python path <input id="pythonPath" /></label>
+              <label>Codex command <input id="codexCommand" /></label>
+              <label>Codex sandbox
+                <select id="sandboxMode">
+                  <option value="workspace-write">workspace-write</option>
+                  <option value="read-only">read-only</option>
+                  <option value="danger-full-access">danger-full-access</option>
+                </select>
+              </label>
+              <label>Codex timeout seconds <input id="timeoutSeconds" type="number" min="60" step="60" /></label>
+            </div>
+
+            <div class="section-title">Executor Models</div>
+            <div class="settings-grid">
+              <label>None/low executor <input id="executorDefault" /></label>
+              <label>Medium/high executor <input id="executorComplex" /></label>
+              <label>Maximum executor <input id="executorMax" /></label>
+            </div>
+            <div class="toggle-list settings-toggles">
+              <div class="toggle-row">
+                <div>
+                  <div>Notify when done</div>
+                  <span>Show a desktop notification when a run finishes.</span>
+                </div>
+                <button class="switch" id="notifyOnFinish" aria-label="Notify when done"></button>
+              </div>
+              <div class="toggle-row">
+                <div>
+                  <div>Skip git repo check</div>
+                  <span>Allow running in folders that are not git repositories.</span>
+                </div>
+                <button class="switch" id="skipGitRepoCheck" aria-label="Skip git repo check"></button>
+              </div>
+            </div>
+          </div>
+
+          <div class="view" id="authView">
+            <div class="section-title">API</div>
+            <div class="toggle-list settings-toggles">
+              <div class="toggle-row">
+                <div>
+                  <div>Use Codex login</div>
+                  <span>Prefer the account already configured in Codex CLI. API key below is optional.</span>
+                </div>
+                <button class="switch on" id="useCodexLogin" aria-label="Use Codex login"></button>
+              </div>
+            </div>
+            <div class="settings-grid">
+              <label>OpenAI API key <input id="openaiApiKey" type="password" autocomplete="off" /></label>
+              <label>Anthropic API key <input id="anthropicApiKey" type="password" autocomplete="off" /></label>
+              <label>OpenAI base URL <input id="openaiBaseUrl" /></label>
+              <label>Local model URL <input id="localModelUrl" /></label>
+              <label>LM Studio URL <input id="lmStudioUrl" placeholder="http://127.0.0.1:1234/v1" /></label>
+            </div>
+
+            <div class="section-title">Supervisor Choice</div>
+            <div class="settings-grid">
+              <label>Mode
+                <select id="supervisorModelMode">
+                  <option value="auto">Auto</option>
+                  <option value="task">Pick by task</option>
+                  <option value="manual">Manual</option>
+                </select>
+              </label>
+              <label>Manual supervisor model <select id="supervisorManualModel"></select></label>
+            </div>
+
+            <div class="section-title">Model Catalog</div>
+            <div class="settings-grid model-form">
+              <label>Name <input id="newModelLabel" placeholder="My local coder" /></label>
+              <label>Model <input id="newModelName" placeholder="gpt-5.4-mini or ollama model" /></label>
+              <label>Provider
+                <select id="newModelProvider">
+                  <option value="openai">openai</option>
+                  <option value="anthropic">anthropic</option>
+                  <option value="local">local</option>
+                  <option value="lmstudio">lmstudio</option>
+                </select>
+              </label>
+              <label>Reasoning
+                <select id="newModelReasoning">
+                  <option value="none">none</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">extra high</option>
+                </select>
+              </label>
+              <label>Mode
+                <select id="newModelMode">
+                  <option value="both">both</option>
+                  <option value="supervisor">supervisor</option>
+                  <option value="direct">direct</option>
+                </select>
+              </label>
+              <label>Task tags <input id="newModelTags" placeholder="ui, auth, bugfix" /></label>
+            </div>
+            <div class="button-row">
+              <button class="primary" id="addModel">Add Model</button>
+              <button class="ghost" id="loadLmStudioModels">Load LM Studio</button>
+              <button class="ghost" id="runDiagnostics">Run diagnostics</button>
+            </div>
+            <div id="modelCatalogList" class="catalog-list"></div>
+            <pre id="diagnosticsBox" class="data-block"></pre>
+          </div>
+        </section>
+
+        <div class="resize-handle right" id="rightResize" title="Resize details"></div>
+        <aside class="inspector chat-control">
+          <div class="panel-head compact">
+            <h2>Chat</h2>
+            <button class="ghost" id="openRuns">Open Runs</button>
+          </div>
+          <div class="chat-control-body">
+            <button class="primary wide" id="newChatButton">New Chat</button>
+            <label>
+              <span>Title</span>
+              <input id="chatTitleInput" />
+            </label>
+            <div class="mode-settings">
+              <label>
+                <span>Model</span>
+                <select id="modeModel"></select>
+              </label>
+              <label>
+                <span>Reasoning</span>
+                <select id="modeReasoning">
+                  <option value="auto">auto</option>
+                  <option value="none">none</option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">extra high</option>
+                </select>
+              </label>
+            </div>
+            <div class="section-title inline">Context</div>
+            <div class="context-card">
+              <div class="context-head">
+                <span>Used context</span>
+                <strong id="contextPercent">0%</strong>
+              </div>
+              <div class="context-bar"><span id="contextBar"></span></div>
+              <div class="context-details" id="contextDetails">0 / 128,000 tokens</div>
+              <div class="context-details" id="costEstimate">Estimated: n/a</div>
+              <div class="context-chips" id="contextChips"></div>
+            </div>
+            <div class="section-title inline">Run Details</div>
+            <pre class="inspector-body" id="inspectorBody">No run selected.</pre>
+          </div>
+        </aside>
+      </section>
+      <section class="terminal-panel" id="terminalPanel" aria-label="Terminal">
+        <div class="terminal-head">
+          <div>
+            <strong>Terminal</strong>
+            <span id="terminalCwd">.</span>
+          </div>
+          <div class="terminal-actions">
+            <button class="ghost" id="terminalPickCwd" type="button">Folder</button>
+            <button class="ghost" id="terminalStop" type="button">Stop</button>
+            <button class="ghost" id="terminalClear" type="button">Clear</button>
+          </div>
+        </div>
+        <pre class="terminal-output" id="terminalOutput"></pre>
+        <div class="terminal-command-row">
+          <span class="terminal-prompt">&gt;</span>
+          <div class="terminal-input-wrap">
+            <div class="terminal-suggestion" id="terminalSuggestion"></div>
+            <input id="terminalInput" autocomplete="off" spellcheck="false" />
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

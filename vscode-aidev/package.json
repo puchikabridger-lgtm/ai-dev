@@ -1,0 +1,70 @@
+{
+  "name": "aidev-codex-sidebar",
+  "displayName": "AI Dev Codex Sidebar",
+  "description": "Local Cursor-like sidebar for the AI Dev Codex orchestrator.",
+  "version": "0.1.0",
+  "publisher": "local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:aidev.chatView",
+    "onCommand:aidev.openPanel",
+    "onCommand:aidev.init",
+    "onCommand:aidev.latest"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "aidev",
+          "title": "AI Dev",
+          "icon": "media/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "aidev": [
+        {
+          "type": "webview",
+          "id": "aidev.chatView",
+          "name": "Codex Supervisor"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "aidev.openPanel",
+        "title": "AI Dev: Open Chat"
+      },
+      {
+        "command": "aidev.init",
+        "title": "AI Dev: Init Workspace"
+      },
+      {
+        "command": "aidev.latest",
+        "title": "AI Dev: Show Latest Run"
+      }
+    ],
+    "configuration": {
+      "title": "AI Dev",
+      "properties": {
+        "aidev.pythonPath": {
+          "type": "string",
+          "default": "python",
+          "description": "Python executable used to run aidev.py."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.2.1"
+  }
+}
