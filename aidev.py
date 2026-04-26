@@ -318,12 +318,19 @@ def classify_task(prompt: str, forced_reasoning: str | None = None) -> dict[str,
     has_security_risk = any(k in lower for k in ["security", "encrypted", "encryption", "payment"])
     has_migration_risk = any(k in lower for k in ["migration", "migrations", "миграц"])
     is_important = has_database_risk or has_auth_risk or has_security_risk or has_migration_risk
-    is_ui = any(k in lower for k in ["ui", "interface", "frontend", "css", "page", "dashboard", "visual", "button", "layout", "website", "client"])
+    ui_keywords = ["ui", "interface", "frontend", "css", "page", "dashboard", "visual", "button", "layout", "website"]
+    ui_phrase_patterns = [r"client[-\s]side", r"\bweb client\b", r"\bdesktop client\b", r"\bmobile client\b", r"\bbrowser client\b"]
+    is_ui = any(k in lower for k in ui_keywords) or any(re.search(p, lower) for p in ui_phrase_patterns)
     is_bug = any(k in lower for k in ["bug", "error", "fail", "fix", "traceback", "exception", "broken", "не работает", "ошибка"])
     is_easy_error = is_bug and any(k in lower for k in [
         "lint", "linter", "format", "formatter", "typo", "syntax", "semicolon", "import",
         "unused", "bracket", "quote", "прост", "легк", "линтер", "опечат", "скобк"
     ])
+    is_narrow_error = is_bug and bool(
+        re.search(r"\b(401|403|404|500|502|503|504)\b", lower)
+        or re.search(r"\b(invalid_client|invalid_grant|invalid_token|access[_\s-]?denied|access blocked|unauthorized|forbidden)\b", lower)
+        or re.search(r"\b(config|configuration|env|environment|credential|credentials|secret|token|key|api key)\b", lower)
+    )
     is_small_edit = (
         any(k in lower for k in ["change", "rename", "replace", "поменя", "измени", "замени", "переменн"])
         or has_word("set")
@@ -339,7 +346,10 @@ def classify_task(prompt: str, forced_reasoning: str | None = None) -> dict[str,
         "social platform", "архитектур", "база данных", "аутентификац", "авторизац"
     ])
     has_rewrite_keyword = has_word("rewrite") or "перепиш" in lower
-    is_arch = has_arch_keyword or is_important or (has_rewrite_keyword and len(words) > 14)
+    if is_narrow_error and not has_arch_keyword:
+        is_arch = False
+    else:
+        is_arch = has_arch_keyword or is_important or (has_rewrite_keyword and len(words) > 14)
     if is_arch:
         is_tiny_create = False
     is_create = any(k in lower for k in ["create", "build", "make", "code", "сделай", "создай", "напиши программу"])
@@ -1468,7 +1478,8 @@ def command_run(args: argparse.Namespace) -> int:
     if codex_result.get("duration_seconds") is not None:
         phase_seconds["codex_exec"] = float(codex_result["duration_seconds"])
     after_git = measure_phase("git_after", get_git_state)
-    write_json(run_dir / "after-state.json", {"git": after_git})
+    after_snapshot = measure_phase("snapshot_after", snapshot_files)
+    write_json(run_dir / "after-state.json", {"git": after_git, "files": after_snapshot})
     if after_git.get("diff"):
         (run_dir / "after-diff.patch").write_text(str(after_git["diff"]), encoding="utf-8")
 
