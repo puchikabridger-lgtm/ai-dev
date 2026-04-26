@@ -1420,7 +1420,8 @@ def command_run(args: argparse.Namespace) -> int:
     if codex_result.get("duration_seconds") is not None:
         phase_seconds["codex_exec"] = float(codex_result["duration_seconds"])
     after_git = measure_phase("git_after", get_git_state)
-    write_json(run_dir / "after-state.json", {"git": after_git})
+    after_snapshot = measure_phase("snapshot_after", snapshot_files)
+    write_json(run_dir / "after-state.json", {"git": after_git, "files": after_snapshot})
     if after_git.get("diff"):
         (run_dir / "after-diff.patch").write_text(str(after_git["diff"]), encoding="utf-8")
 
