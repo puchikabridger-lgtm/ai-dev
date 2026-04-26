@@ -87,30 +87,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
 }
 
 
-DEFAULT_BUDGET: dict[str, Any] = {
-    "session_budget_usd": 5.0,
-    "request_budget_usd": 0.50,
-    "retry_budget_usd": 0.15,
-    "max_codex_calls_per_request": 2,
-    "daily_codex_call_limit": 20,
-    "daily_high_call_limit": 3,
-    "daily_xhigh_call_limit": 1,
-    "warn_at_percent": 80,
-    "block_at_percent": 95,
-    "estimated_call_cost_usd": {
-        "none": 0.01,
-        "low": 0.03,
-        "medium": 0.08,
-        "high": 0.25,
-        "xhigh": 0.60
-    },
-    "model_token_prices_usd_per_1m": {
-        "gpt-5.4-mini": {"input": 0.75, "cached_input": 0.075, "output": 4.50, "source": "OpenAI model docs, checked 2026-04-26"},
-        "gpt-5.4": {"input": 2.50, "cached_input": 0.25, "output": 15.00, "source": "OpenAI model docs, checked 2026-04-26"},
-        "gpt-5.5": {"input": 2.50, "cached_input": 0.25, "output": 15.00, "source": "temporary GPT-5.4-compatible estimate until verified pricing is configured"},
-        "gpt-5.4-nano": {"input": 0.20, "cached_input": 0.02, "output": 1.25, "source": "OpenAI model docs, checked 2026-04-26"}
-    }
-}
+SHARED_DIR = Path(__file__).parent / "shared"
+with (SHARED_DIR / "budget-defaults.json").open("r", encoding="utf-8") as _budget_defaults_file:
+    DEFAULT_BUDGET: dict[str, Any] = json.load(_budget_defaults_file)
 
 
 DEFAULT_RULES = {
@@ -318,12 +297,19 @@ def classify_task(prompt: str, forced_reasoning: str | None = None) -> dict[str,
     has_security_risk = any(k in lower for k in ["security", "encrypted", "encryption", "payment"])
     has_migration_risk = any(k in lower for k in ["migration", "migrations", "миграц"])
     is_important = has_database_risk or has_auth_risk or has_security_risk or has_migration_risk
-    is_ui = any(k in lower for k in ["ui", "interface", "frontend", "css", "page", "dashboard", "visual", "button", "layout", "website", "client"])
+    ui_keywords = ["ui", "interface", "frontend", "css", "page", "dashboard", "visual", "button", "layout", "website"]
+    ui_phrase_patterns = [r"client[-\s]side", r"\bweb client\b", r"\bdesktop client\b", r"\bmobile client\b", r"\bbrowser client\b"]
+    is_ui = any(k in lower for k in ui_keywords) or any(re.search(p, lower) for p in ui_phrase_patterns)
     is_bug = any(k in lower for k in ["bug", "error", "fail", "fix", "traceback", "exception", "broken", "не работает", "ошибка"])
     is_easy_error = is_bug and any(k in lower for k in [
         "lint", "linter", "format", "formatter", "typo", "syntax", "semicolon", "import",
         "unused", "bracket", "quote", "прост", "легк", "линтер", "опечат", "скобк"
     ])
+    is_narrow_error = is_bug and bool(
+        re.search(r"\b(401|403|404|500|502|503|504)\b", lower)
+        or re.search(r"\b(invalid_client|invalid_grant|invalid_token|access[_\s-]?denied|access blocked|unauthorized|forbidden)\b", lower)
+        or re.search(r"\b(config|configuration|env|environment|credential|credentials|secret|token|key|api key)\b", lower)
+    )
     is_small_edit = (
         any(k in lower for k in ["change", "rename", "replace", "поменя", "измени", "замени", "переменн"])
         or has_word("set")
@@ -339,7 +325,10 @@ def classify_task(prompt: str, forced_reasoning: str | None = None) -> dict[str,
         "social platform", "архитектур", "база данных", "аутентификац", "авторизац"
     ])
     has_rewrite_keyword = has_word("rewrite") or "перепиш" in lower
-    is_arch = has_arch_keyword or is_important or (has_rewrite_keyword and len(words) > 14)
+    if is_narrow_error and not has_arch_keyword:
+        is_arch = False
+    else:
+        is_arch = has_arch_keyword or is_important or (has_rewrite_keyword and len(words) > 14)
     if is_arch:
         is_tiny_create = False
     is_create = any(k in lower for k in ["create", "build", "make", "code", "сделай", "создай", "напиши программу"])
@@ -971,6 +960,7 @@ SNAPSHOT_IGNORED_PATHS = {
 }
 
 SNAPSHOT_IGNORED_EXTENSIONS = {".log", ".tmp", ".bak"}
+SNAPSHOT_MAX_BACKUP_BYTES = 2 * 1024 * 1024
 
 
 def is_snapshot_ignored(rel: str) -> bool:
@@ -989,8 +979,38 @@ def is_snapshot_ignored(rel: str) -> bool:
     return any(part in SNAPSHOT_IGNORED_DIRS for part in parts)
 
 
+def git_tracked_files(root: Path) -> set[str] | None:
+    git = shutil.which("git")
+    if not git:
+        return None
+    inside = run_cmd([git, "rev-parse", "--is-inside-work-tree"], cwd=root, timeout=20)
+    if inside.returncode != 0 or inside.stdout.strip() != "true":
+        return None
+    result = subprocess.run(
+        [git, "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+        cwd=str(root),
+        capture_output=True,
+        timeout=120,
+        shell=False,
+    )
+    if result.returncode != 0:
+        return None
+    raw = result.stdout.decode("utf-8", "replace")
+    return {part.replace("\\", "/") for part in raw.split("\0") if part}
+
+
 def snapshot_files() -> dict[str, str]:
     result: dict[str, str] = {}
+    tracked = git_tracked_files(ROOT)
+    if tracked is not None:
+        for rel in tracked:
+            if is_snapshot_ignored(rel):
+                continue
+            source = ROOT / rel
+            if not source.is_file():
+                continue
+            result[rel] = file_hash(source)
+        return result
     for path in ROOT.rglob("*"):
         if not path.is_file():
             continue
@@ -1003,18 +1023,35 @@ def snapshot_files() -> dict[str, str]:
 
 def backup_before_files(run_dir: Path, before_snapshot: dict[str, str]) -> None:
     backup_dir = run_dir / "before-files"
+    backed = 0
+    skipped_oversized = 0
     for rel in before_snapshot:
         if is_snapshot_ignored(rel):
             continue
         source = ROOT / rel
         if not source.is_file():
             continue
+        try:
+            size = source.stat().st_size
+        except OSError:
+            continue
+        if size > SNAPSHOT_MAX_BACKUP_BYTES:
+            skipped_oversized += 1
+            continue
         target = backup_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         try:
             shutil.copy2(source, target)
+            backed += 1
         except OSError:
             pass
+    if backed or skipped_oversized:
+        write_json(run_dir / "before-files-manifest.json", {
+            "backed_up": backed,
+            "skipped_oversized": skipped_oversized,
+            "max_backup_bytes": SNAPSHOT_MAX_BACKUP_BYTES,
+            "created_at": dt.datetime.now().isoformat(),
+        })
 
 
 def changed_files(before_snapshot: dict[str, str]) -> list[str]:
@@ -1420,7 +1457,8 @@ def command_run(args: argparse.Namespace) -> int:
     if codex_result.get("duration_seconds") is not None:
         phase_seconds["codex_exec"] = float(codex_result["duration_seconds"])
     after_git = measure_phase("git_after", get_git_state)
-    write_json(run_dir / "after-state.json", {"git": after_git})
+    after_snapshot = measure_phase("snapshot_after", snapshot_files)
+    write_json(run_dir / "after-state.json", {"git": after_git, "files": after_snapshot})
     if after_git.get("diff"):
         (run_dir / "after-diff.patch").write_text(str(after_git["diff"]), encoding="utf-8")
 

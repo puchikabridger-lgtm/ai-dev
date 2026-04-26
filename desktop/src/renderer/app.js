@@ -35,6 +35,7 @@ const state = {
   liveOutput: {},
   pendingPrompt: "",
   pendingAttachments: [],
+  pendingRunRequest: null,
   activeFeature: "auto",
   workspaceMode: "project",
   currentRunId: "",
@@ -557,7 +558,7 @@ async function submit() {
     rememberChat("direct", "user", prompt);
     appendPipelineStep(`routing: ${effectiveFeature}`, buildPromptPreview(state.mode, prompt, history, attachments, effectiveFeature));
     setSendStatus(effectiveFeature === "plan" ? "Standalone plan request sent." : "Standalone discussion request sent.");
-    await safeInvoke(() => window.aidev.direct({
+    await invokeDirectWithApproval({
       prompt,
       history,
       attachments,
@@ -565,12 +566,13 @@ async function submit() {
       detached: true,
       supervisorMode: state.mode === "supervisor",
       settings: modeSettings(state.mode),
+      options: state.runOptions,
       clientStartedAt,
       routeDecision: {
         route: `standalone_${state.mode}_${effectiveFeature}`,
         reason: `Standalone chat is not bound to a project folder. Supervisor mode: ${state.mode === "supervisor" ? "on" : "off"}.`,
       },
-    }));
+    });
     $("promptInput").value = "";
     currentChat().drafts[state.mode] = "";
     clearCurrentAttachments();
@@ -583,15 +585,16 @@ async function submit() {
     rememberChat("direct", "user", prompt);
     appendPipelineStep("routing: discuss", buildPromptPreview("direct", prompt, history, attachments, feature));
     setSendStatus("Discussion request sent.");
-    await safeInvoke(() => window.aidev.direct({
+    await invokeDirectWithApproval({
       prompt,
       history,
       attachments,
       feature,
       settings: modeSettings("direct"),
+      options: state.runOptions,
       clientStartedAt,
       routeDecision: { route: "feature_discuss", reason: "User selected /discuss." },
-    }));
+    });
     $("promptInput").value = "";
     currentChat().drafts[state.mode] = "";
     clearCurrentAttachments();
@@ -622,7 +625,7 @@ async function submit() {
     if (!analysis?.run) return;
     appendSupervisorAnalysis(analysis.run);
     setSendStatus("Supervisor request sent to Codex.");
-    await safeInvoke(() => window.aidev.supervisor({ prompt, attachments, feature, execute: true, settings: modeSettings("supervisor"), options: state.runOptions, expectedRun: analysis.run, clientStartedAt }));
+    await invokeSupervisorWithApproval({ prompt, attachments, feature, execute: true, settings: modeSettings("supervisor"), options: state.runOptions, expectedRun: analysis.run, clientStartedAt });
     $("promptInput").value = "";
     currentChat().drafts[state.mode] = "";
     clearCurrentAttachments();
@@ -635,15 +638,16 @@ async function submit() {
     rememberChat("direct", "user", prompt);
     appendPipelineStep("analyzing prompt...", buildPromptPreview("direct", prompt, history, attachments, feature));
     setSendStatus("Direct request sent to backend.");
-    await safeInvoke(() => window.aidev.direct({
+    await invokeDirectWithApproval({
       prompt,
       history,
       attachments,
       feature,
       settings: modeSettings("direct"),
+      options: state.runOptions,
       clientStartedAt,
       routeDecision: { route: feature === "code" ? "feature_code_direct" : "manual_direct", reason: feature === "code" ? "User selected /code in Direct mode." : "User selected Direct mode." },
-    }));
+    });
     $("promptInput").value = "";
     currentChat().drafts.direct = "";
     clearCurrentAttachments();
@@ -659,15 +663,16 @@ async function submit() {
     setSendStatus("Supervisor skipped. Direct request sent to Codex.");
     state.processLog = `Queued: direct\nRouter: ${route.reason}\n`;
     renderInspector();
-    await safeInvoke(() => window.aidev.direct({
+    await invokeDirectWithApproval({
       prompt,
       history,
       attachments,
       feature,
       settings: modeSettings("direct"),
+      options: state.runOptions,
       clientStartedAt,
       routeDecision: { route: "auto_direct", reason: route.reason },
-    }));
+    });
     $("promptInput").value = "";
     currentChat().drafts.supervisor = "";
     clearCurrentAttachments();
@@ -681,7 +686,7 @@ async function submit() {
   if (!analysis?.run) return;
   appendSupervisorAnalysis(analysis.run);
   setSendStatus("Supervisor request sent to Codex.");
-  await safeInvoke(() => window.aidev.supervisor({ prompt, attachments, feature, execute: true, settings: modeSettings("supervisor"), options: state.runOptions, expectedRun: analysis.run, clientStartedAt }));
+  await invokeSupervisorWithApproval({ prompt, attachments, feature, execute: true, settings: modeSettings("supervisor"), options: state.runOptions, expectedRun: analysis.run, clientStartedAt });
   $("promptInput").value = "";
   currentChat().drafts.supervisor = "";
   clearCurrentAttachments();
@@ -951,6 +956,33 @@ async function safeInvoke(action) {
   }
 }
 
+async function maybeOfferApprovalForBlockedRun() {
+  state.runs = await window.aidev.listRuns();
+  renderRuns();
+  const latestId = state.runs[0]?.id;
+  if (!latestId) return false;
+  const latest = await window.aidev.readRun(latestId);
+  const status = String(latest?.audit?.status || "");
+  if (status !== "blocked_by_budget" && status !== "blocked_by_approval") return false;
+  const gate = approvalGate(latest);
+  if (!gate.needsApproval) return false;
+  appendApprovalCard(gate);
+  return true;
+}
+
+async function invokeDirectWithApproval(payload) {
+  state.pendingRunRequest = { kind: "direct", payload: { ...payload } };
+  const result = await safeInvoke(() => window.aidev.direct(payload));
+  if (result !== null) return result;
+  await maybeOfferApprovalForBlockedRun();
+  return null;
+}
+
+async function invokeSupervisorWithApproval(payload) {
+  state.pendingRunRequest = { kind: "supervisor", payload: { ...payload } };
+  return safeInvoke(() => window.aidev.supervisor(payload));
+}
+
 function updateRunControls() {
   $("sendButton").disabled = state.activeRun;
   $("stopButton").disabled = !state.activeRun;
@@ -964,6 +996,7 @@ function updateRunControls() {
 function resetRunOptions() {
   state.runOptions.approveHigh = false;
   state.runOptions.forceBudget = false;
+  state.pendingRunRequest = null;
 }
 
 function targetMessages(idOrTitle) {
@@ -1892,7 +1925,6 @@ async function handleFinish(payload) {
   if (payload.code === 3 || payload.code === 4) {
     const gate = approvalGate(latest);
     appendApprovalCard(gate);
-    resetRunOptions();
     return;
   }
   appendMessage(targetMessages(payload.id), "error", humanErrorFromCode(payload.code, payload.stdout || "", payload.stderr || "", payload.logPath || ""));
@@ -2213,7 +2245,24 @@ function appendApprovalCard(gate) {
     approve.disabled = true;
     state.runOptions.approveHigh = state.runOptions.approveHigh || gate.approveHigh;
     state.runOptions.forceBudget = state.runOptions.forceBudget || gate.forceBudget;
-    await safeInvoke(() => window.aidev.supervisor({ prompt: state.pendingPrompt, attachments: state.pendingAttachments, execute: true, settings: state.settings, options: state.runOptions, expectedRun: gate.run, clientStartedAt: state.pendingClientStartedAt || Date.now() }));
+    const pending = state.pendingRunRequest;
+    if (pending?.kind === "direct") {
+      await invokeDirectWithApproval({
+        ...pending.payload,
+        options: { ...(pending.payload.options || {}), ...state.runOptions },
+        clientStartedAt: pending.payload.clientStartedAt || state.pendingClientStartedAt || Date.now(),
+      });
+      return;
+    }
+    if (pending?.kind === "supervisor") {
+      await invokeSupervisorWithApproval({
+        ...pending.payload,
+        options: { ...(pending.payload.options || {}), ...state.runOptions },
+        clientStartedAt: pending.payload.clientStartedAt || state.pendingClientStartedAt || Date.now(),
+      });
+      return;
+    }
+    await invokeSupervisorWithApproval({ prompt: state.pendingPrompt, attachments: state.pendingAttachments, execute: true, settings: state.settings, options: state.runOptions, expectedRun: gate.run, clientStartedAt: state.pendingClientStartedAt || Date.now() });
   });
   const cancel = document.createElement("button");
   cancel.className = "ghost";
@@ -2222,6 +2271,7 @@ function appendApprovalCard(gate) {
     cancel.textContent = "Skipped";
     cancel.classList.add("approved");
     cancel.disabled = true;
+    resetRunOptions();
   });
   actions.appendChild(approve);
   actions.appendChild(cancel);
