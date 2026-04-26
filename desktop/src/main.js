@@ -3,6 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const cp = require("child_process");
 const crypto = require("crypto");
+const policy = require("./policy");
 
 const APP_ROOT = path.resolve(__dirname, "..", "..");
 const APP_AI_DIR = path.join(APP_ROOT, ".ai");
@@ -276,17 +277,33 @@ function refreshProjectSummary(root) {
       readText(path.join(selected, "README.md")),
     ].join("\n\n").trim().slice(0, 12000);
     if (source) {
+      const summaryModel = current.directModel || current.model || "gpt-5.4-mini";
+      const summaryReasoning = "none";
+      const summaryPrompt = `Write one short project summary for a sidebar. Max 12 words. No markdown.\n\n${source}`;
+      const summaryRunId = nowRunId("summary-refresh");
+      const projectAiDir = path.join(selected, ".ai");
+      const gate = policy.preflight({
+        projectAiDir,
+        model: summaryModel,
+        reasoning: summaryReasoning,
+        promptText: summaryPrompt,
+        budgetGuard: current.budgetGuard !== false,
+        approvalGranted: false,
+      });
+      if (!gate.ok) {
+        return touchProject(selected, { summary: fallback });
+      }
       const result = cp.spawnSync(codex, [
         "exec",
         "-",
         "--cd",
         selected,
         "-m",
-        current.directModel || current.model || "gpt-5.4-mini",
+        summaryModel,
         "-s",
         "read-only",
       ], {
-        input: `Write one short project summary for a sidebar. Max 12 words. No markdown.\n\n${source}`,
+        input: summaryPrompt,
         cwd: selected,
         shell: needsShell(codex),
         windowsHide: true,
@@ -295,7 +312,17 @@ function refreshProjectSummary(root) {
         timeout: 120000,
       });
       const text = String(result.stdout || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean).slice(-1)[0];
-      if (result.status === 0 && text) summary = text.replace(/^["']|["']$/g, "").slice(0, 120);
+      if (result.status === 0 && text) {
+        summary = text.replace(/^["']|["']$/g, "").slice(0, 120);
+        try {
+          policy.appendLedger(projectAiDir, {
+            runId: summaryRunId,
+            model: summaryModel,
+            reasoning: summaryReasoning,
+            cost: gate.budgetStatus.estimated_cost_usd,
+          });
+        } catch {}
+      }
     }
   }
   return touchProject(selected, { summary });
@@ -1521,6 +1548,29 @@ ipcMain.handle("run:direct", (_event, payload) => {
     route: payload.routeDecision || { route: "manual_direct" },
     created_at: new Date().toISOString(),
   });
+  const directRunOptions = payload.options || {};
+  const directProjectAiDir = detached ? APP_AI_DIR : projectAiDir();
+  const directGate = policy.preflight({
+    projectAiDir: directProjectAiDir,
+    model: directModel,
+    reasoning: directReasoning,
+    promptText: fullPrompt,
+    budgetGuard: merged.budgetGuard !== false,
+    approvalGranted: Boolean(directRunOptions.approveHigh),
+    forceBudget: Boolean(directRunOptions.forceBudget),
+  });
+  if (!directGate.ok) {
+    writeJson(path.join(runDir, "audit.json"), {
+      status: directGate.reason,
+      changed_files: [],
+      scope_warnings: [],
+      codex_ok: false,
+      codex_returncode: null,
+      budget: directGate.budgetStatus,
+      created_at: new Date().toISOString(),
+    });
+    throw new Error(directGate.error);
+  }
   const beforeSnapshot = detached ? {} : snapshot_files_safe();
   writeJson(path.join(runDir, "before-state.json"), { git: { has_git: detached ? false : hasGitRepository() }, files: beforeSnapshot });
   if (!detached) backupBeforeFiles(runDir, beforeSnapshot);
@@ -1561,7 +1611,7 @@ ipcMain.handle("run:direct", (_event, payload) => {
         codex_returncode: code,
         created_at: new Date().toISOString(),
       });
-      writeJson(path.join(runDir, "usage.json"), buildUsageReport({
+      const usage = buildUsageReport({
         model: directModel,
         reasoning: directReasoning,
         prompt: fullPrompt,
@@ -1570,7 +1620,23 @@ ipcMain.handle("run:direct", (_event, payload) => {
         lastMessage,
         startedAt,
         routeDecision: payload.routeDecision || { route: "manual_direct" },
-      }));
+      });
+      writeJson(path.join(runDir, "usage.json"), usage);
+      try {
+        const actualCost = Number(usage?.cost?.actual_usd);
+        const estimatedCost = Number(usage?.cost?.estimated_usd);
+        const ledgerCost = Number.isFinite(actualCost) && actualCost > 0
+          ? actualCost
+          : (Number.isFinite(estimatedCost) ? estimatedCost : directGate.budgetStatus.estimated_cost_usd);
+        policy.appendLedger(directProjectAiDir, {
+          runId: directRunId,
+          model: directModel,
+          reasoning: directReasoning,
+          cost: ledgerCost,
+        });
+      } catch (error) {
+        console.error("Direct run ledger append failed:", error);
+      }
     },
   });
   return true;
