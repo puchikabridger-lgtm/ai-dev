@@ -614,13 +614,12 @@ function hasGitRepository() {
 }
 
 function nowRunId(prefix = "") {
-  const stamp = new Date()
-    .toISOString()
-    .replace(/[-:]/g, "")
-    .replace("T", "-")
-    .slice(0, 15);
+  const now = new Date();
+  const iso = now.toISOString().replace(/[-:]/g, "").replace("T", "-");
+  const stamp = iso.slice(0, 15);
+  const millis = String(now.getMilliseconds()).padStart(3, "0");
   const suffix = crypto.randomBytes(3).toString("hex");
-  return `${stamp}-${prefix ? `${prefix}-` : ""}${suffix}`;
+  return `${stamp}-${millis}-${prefix ? `${prefix}-` : ""}${suffix}`;
 }
 
 const SNAPSHOT_IGNORED_DIRS = new Set([".git", ".hg", ".svn", "node_modules", ".venv", "venv", "__pycache__", "dist", "build"]);
@@ -993,6 +992,24 @@ function diagnosticsForSettings(merged) {
   };
 }
 
+function runSortKeys(dir, contract) {
+  const created = Date.parse(contract?.created_at || "");
+  let mtimeMs = 0;
+  try {
+    mtimeMs = fs.statSync(dir).mtimeMs;
+  } catch {}
+  if (Number.isFinite(created)) return created;
+  return mtimeMs;
+}
+
+function runMtime(dir) {
+  try {
+    return fs.statSync(dir).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 function listRuns() {
   const runsDir = projectRunsDir();
   if (!fs.existsSync(runsDir)) return [];
@@ -1014,9 +1031,12 @@ function listRuns() {
         model: contract.model || "",
         usage,
         request: readText(path.join(dir, "request.md")).trim(),
+        sortKey: runSortKeys(dir, contract),
+        mtimeMs: runMtime(dir),
       };
     })
-    .sort((a, b) => b.id.localeCompare(a.id));
+    .sort((a, b) => b.sortKey - a.sortKey || b.mtimeMs - a.mtimeMs || b.id.localeCompare(a.id))
+    .map(({ sortKey, mtimeMs, ...rest }) => rest);
 }
 
 function readRun(runId) {
